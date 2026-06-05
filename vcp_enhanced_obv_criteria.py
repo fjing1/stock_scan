@@ -1,15 +1,17 @@
-#!/opt/homebrew/opt/python@3.12/bin/python3.12
+#!/usr/bin/env python3
 """
 Enhanced VCP Pattern Detector with OBV Moving Average Integration
-Based on Mark Minervini's Trend Template + OBV 21-day MA Analysis
- 
-Enhanced Selection Criteria (40-Point System):
+Based on Mark Minervini's Trend Template + OBV 21-day MA Analysis + Xunlongjue (寻龙诀) Panel
+
+Enhanced Selection Criteria (50-Point System):
 1. Trend Template Met (Mark Minervini's 10 criteria) - 10 points
 2. Market Cap > $100 million
-3. Uptrend Nearing Breakout - 7 points
+3. Uptrend Nearing Breakout - 6 points (with ATR-graduated breakout penalty)
 4. Higher Lows Pattern - 3 points
 5. Volume Contracting - 6 points
-6. OBV Analysis - 14 points (OBV 21-day MA: 3pts + Accumulation: 3pts + Price Higher Lows: 3pts + OBV Higher High: 1pt + Price Divergence: 4pts)
+6. Xunlongjue (寻龙诀) Panel - 10 points
+   (bbuy crossover 3pts + trend rising 2pts + trend>0 2pts + RSI rising in 50-70 2pts + no recent red bar 1pt)
+7. OBV Analysis - 14 points (OBV 21-day MA: 3pts + Accumulation: 3pts + Price Higher Lows: 3pts + OBV Higher High: 1pt + Price Divergence: 4pts)
 
 PLUS:
 - Extension / Late Breakout Filter (no score, hard filter):
@@ -361,6 +363,9 @@ def check_trend_template(daily_data):
         score += 1
     
     # 10. Relative strength (simplified - price performance vs market)
+    relative_strength_good = False
+    details['relative_strength'] = False
+    details['price_performance_3m'] = 0.0
     if len(daily_data) >= 63:
         price_3m_ago = daily_data['Close'].iloc[-63]
         price_performance = (latest['Close'] - price_3m_ago) / price_3m_ago * 100
@@ -645,6 +650,189 @@ def add_extension_and_breakout_filters(daily_data, settings=None):
 
     return not is_extended, details, daily_data
 
+# ==================== XUNLONGJUE (寻龙诀) PANEL SIGNALS ====================
+# Translated from "寻龙诀 Panel V1" Pine Script (© bigbenv5, MPL 2.0)
+# https://mozilla.org/MPL/2.0/
+#
+# Combines four sub-signals into a single 0–10 score:
+#   - bbuy crossover in last 3 bars (3 pts) — fresh bullish trigger
+#   - trend (t) rising over last 3 bars     (2 pts)
+#   - trend (t) > 0 (active uptrend)        (2 pts)
+#   - RSI(14) rising and 50 ≤ RSI ≤ 70      (2 pts)
+#   - No varr1 cross-under red_level recent (1 pt)
+
+XUNLONG_CONFIG = {
+    "K": 9,
+    "D": 3,
+    "MidPeriod": 58,
+    "varr_len": 6,
+    "red_level": 82.0,
+    "recent_window": 3,  # bars considered "recent" for bbuy / red-bar checks
+}
+
+def _xsa(src, length, wei):
+    """Pine Script `xsa` — SMA seed, then weighted recursive smoothing.
+
+    out[t] = (src[t] * wei + out[t-1] * (length - wei)) / length
+    With wei=1 this is a Wilder-style RMA after the SMA seed.
+    """
+    s = pd.Series(src, dtype=float).reset_index(drop=True)
+    n = len(s)
+    out = np.full(n, np.nan)
+    if n < length:
+        return pd.Series(out, index=pd.RangeIndex(n))
+    out[length - 1] = s.iloc[:length].mean()
+    a = wei / length
+    b = (length - wei) / length
+    for i in range(length, n):
+        cur = s.iloc[i]
+        prev = out[i - 1]
+        if np.isnan(cur):
+            out[i] = prev
+        else:
+            out[i] = cur * a + prev * b
+    return pd.Series(out)
+
+def _compute_xunlong_signals(daily_data, cfg=None):
+    """Compute the four signal series from the Pine script.
+
+    Returns a dict of pandas Series aligned to daily_data.index:
+        trend, pump, bbuy, varr1, varr1_crossdn
+    """
+    cfg = {**XUNLONG_CONFIG, **(cfg or {})}
+    K, D, MidPeriod = cfg["K"], cfg["D"], cfg["MidPeriod"]
+    varr_len, red_level = cfg["varr_len"], cfg["red_level"]
+
+    high = daily_data['High'].astype(float).reset_index(drop=True)
+    low = daily_data['Low'].astype(float).reset_index(drop=True)
+    close = daily_data['Close'].astype(float).reset_index(drop=True)
+
+    # ---- Trend (t) ----
+    high_K = high.rolling(K).max()
+    low_K = low.rolling(K).min()
+    denK = (high_K - low_K).clip(lower=1e-9)  # mintick-safe denominator
+
+    var1b = (high_K - close) / denK * 100 - 70
+    var2b = _xsa(var1b, K, 1) + 100
+    var3b = (close - low_K) / denK * 100
+    var4b = _xsa(var3b, D, 1)
+    var5b = _xsa(var4b, D, 1) + 100
+    var6b = var5b - var2b
+    trend = (var6b - 45).where(var6b > 45, 0.0)
+
+    # ---- Pump (p) ----
+    var2q = low.shift(1)
+    abs_move = (low - var2q).abs()
+    up_move = (low - var2q).clip(lower=0)
+    s_abs = _xsa(abs_move, D, 1)
+    s_up = _xsa(up_move, D, 1)
+    var3q = (s_abs / s_up.replace(0, np.nan)).fillna(0) * 100.0
+
+    chg = close.diff()
+    val = pd.Series(np.where(chg > 0, var3q * 10.0, var3q / 10.0))
+    var4q = val.ewm(span=D, adjust=False).mean()
+
+    var5q = low.rolling(30).min()
+    var6q = var4q.rolling(30).max()
+    sma_mid = close.rolling(MidPeriod).mean()
+    var7q = (~sma_mid.isna()).astype(float)
+
+    inner = ((var4q + var6q * 2.0) / 2.0).where(low <= var5q, 0.0)
+    var8q = inner.ewm(span=D, adjust=False).mean() / 999.0 * var7q
+    pump = var8q.clip(upper=100.0)
+
+    # ---- bbuy (green bar trigger) ----
+    typical = (close + low + high) / 3.0
+    d2 = typical.ewm(span=6, adjust=False).mean()
+    d3 = d2.ewm(span=5, adjust=False).mean()
+    bbuy = (d2 > d3) & (d2.shift(1) <= d3.shift(1))
+
+    # ---- varr1 (red bar source — RSI on close-change with xsa smoothing) ----
+    chg_close = close.diff()
+    up_part = _xsa(chg_close.clip(lower=0), varr_len, 1)
+    abs_part = _xsa(chg_close.abs(), varr_len, 1)
+    varr1 = (100.0 * up_part / abs_part.replace(0, np.nan)).fillna(0)
+    varr1_crossdn = (varr1 < red_level) & (varr1.shift(1) >= red_level)
+
+    return {
+        'trend': trend.fillna(0).reset_index(drop=True),
+        'pump': pump.fillna(0).reset_index(drop=True),
+        'bbuy': bbuy.fillna(False).reset_index(drop=True),
+        'varr1': varr1.reset_index(drop=True),
+        'varr1_crossdn': varr1_crossdn.fillna(False).reset_index(drop=True),
+    }
+
+def check_xunlongjue(daily_data):
+    """Score the Xunlongjue Panel signals (0–10).
+
+    Confirmation = score >= 5.
+    """
+    if len(daily_data) < 60:
+        return False, 0, {}
+
+    try:
+        sigs = _compute_xunlong_signals(daily_data)
+    except Exception as e:
+        return False, 0, {'error': str(e)}
+
+    details = {}
+    score = 0
+    window = XUNLONG_CONFIG['recent_window']
+
+    # 1) bbuy crossover in last `window` bars (3 pts)
+    bbuy_recent = bool(sigs['bbuy'].iloc[-window:].any())
+    bbuy_today = bool(sigs['bbuy'].iloc[-1])
+    details['bbuy_recent'] = bbuy_recent
+    details['bbuy_today'] = bbuy_today
+    if bbuy_recent:
+        score += 3
+
+    # 2) trend (t) rising over last 3 bars (2 pts) + 3) trend > 0 (2 pts)
+    t = sigs['trend']
+    t0 = float(t.iloc[-1])
+    t1 = float(t.iloc[-2]) if len(t) >= 2 else 0.0
+    t2 = float(t.iloc[-3]) if len(t) >= 3 else 0.0
+    details['trend_t0'] = round(t0, 2)
+    details['trend_t1'] = round(t1, 2)
+    details['trend_t2'] = round(t2, 2)
+
+    trend_rising = (t0 > t1) and (t1 > t2)
+    details['trend_rising'] = trend_rising
+    if trend_rising:
+        score += 2
+
+    trend_active = t0 > 0
+    details['trend_active'] = trend_active
+    if trend_active:
+        score += 2
+
+    # 4) RSI(14) rising AND in 50–70 band (2 pts)
+    chg = daily_data['Close'].diff()
+    up = chg.clip(lower=0).ewm(alpha=1 / 14, adjust=False).mean()
+    dn = (-chg.clip(upper=0)).ewm(alpha=1 / 14, adjust=False).mean()
+    rsi = (100 - 100 / (1 + up / dn.replace(0, np.nan))).fillna(50)
+    rsi0 = float(rsi.iloc[-1])
+    rsi1 = float(rsi.iloc[-2]) if len(rsi) >= 2 else rsi0
+    rsi2 = float(rsi.iloc[-3]) if len(rsi) >= 3 else rsi1
+    details['rsi'] = round(rsi0, 2)
+    rsi_rising = (rsi0 > rsi1) and (rsi1 > rsi2)
+    details['rsi_rising'] = rsi_rising
+    rsi_constructive = rsi_rising and (50 <= rsi0 <= 70)
+    details['rsi_constructive'] = rsi_constructive
+    if rsi_constructive:
+        score += 2
+
+    # 5) No varr1 cross-under red_level in last `window` bars (1 pt)
+    no_red_recent = not bool(sigs['varr1_crossdn'].iloc[-window:].any())
+    details['no_red_signal_recent'] = no_red_recent
+    details['varr1'] = round(float(sigs['varr1'].iloc[-1]), 2)
+    if no_red_recent:
+        score += 1
+
+    details['pump'] = round(float(sigs['pump'].iloc[-1]), 2)
+
+    return score >= 5, score, details
+
 # ======================== MAIN SCAN LOGIC ========================
 
 def enhanced_vcp_obv_scan(symbol):
@@ -676,37 +864,40 @@ def enhanced_vcp_obv_scan(symbol):
         
         # 4. Volume Contracting (0-6)
         volume_contracting_ok, volume_score, volume_details = check_volume_contracting(daily_data)
-        
-        preliminary_score = trend_score + breakout_score + higher_lows_score + volume_score
-        
-        # 5. OBV Analysis (0-14), only if promising
-        if preliminary_score >= 15:
+
+        # 5. Xunlongjue (寻龙诀) Panel signals (0-10) — local, no extra network calls
+        xunlong_ok, xunlong_score, xunlong_details = check_xunlongjue(daily_data)
+
+        preliminary_score = trend_score + breakout_score + higher_lows_score + volume_score + xunlong_score
+
+        # 6. OBV Analysis (0-14), only if promising
+        if preliminary_score >= 18:
             daily_data = add_obv_calculations(daily_data)
             obv_confirmed, obv_score, obv_details = check_obv_trend_analysis(daily_data)
         else:
             obv_confirmed, obv_score, obv_details = False, 0, {}
-        
-        total_score = trend_score + breakout_score + higher_lows_score + volume_score + obv_score
-        
+
+        total_score = trend_score + breakout_score + higher_lows_score + volume_score + xunlong_score + obv_score
+
         is_stage2 = trend_details.get('is_stage2', False)
-        
-        if is_stage2 and total_score >= 29:
-            vcp_category = "🚀 Stage2 & VCP+OBV"
-        elif is_stage2 and total_score >= 26:
-            vcp_category = "Stage2 & VCP+OBV"
-        elif total_score >= 29:
-            vcp_category = "🔥 VCP+OBV"
-        elif total_score >= 26:
-            vcp_category = "VCP+OBV"
+
+        if is_stage2 and total_score >= 36:
+            vcp_category = "🚀 Stage2 & VCP+OBV+寻龙"
+        elif is_stage2 and total_score >= 32:
+            vcp_category = "Stage2 & VCP+OBV+寻龙"
+        elif total_score >= 36:
+            vcp_category = "🔥 VCP+OBV+寻龙"
+        elif total_score >= 32:
+            vcp_category = "VCP+OBV+寻龙"
         else:
             vcp_category = "📋 low score stock"
-        
+
         result = {
             "symbol": symbol,
             "market_cap": market_cap,
             "market_cap_billions": round(market_cap / 1_000_000_000, 2),
             "total_score": total_score,
-            "max_score": 40,
+            "max_score": 50,
             "vcp_category": vcp_category,
             "current_price": round(daily_data['Close'].iloc[-1], 2),
             "price_change_pct": round((daily_data['Close'].iloc[-1] / daily_data['Close'].iloc[-2] - 1) * 100, 2),
@@ -715,6 +906,7 @@ def enhanced_vcp_obv_scan(symbol):
                 "breakout_ready": breakout_ready,
                 "higher_lows": higher_lows_ok,
                 "volume_contracting": volume_contracting_ok,
+                "xunlong_confirmed": xunlong_ok,
                 "obv_confirmed": obv_confirmed
             },
             "component_scores": {
@@ -722,6 +914,7 @@ def enhanced_vcp_obv_scan(symbol):
                 "breakout_score": breakout_score,
                 "higher_lows_score": higher_lows_score,
                 "volume_score": volume_score,
+                "xunlong_score": xunlong_score,
                 "obv_score": obv_score
             },
             "analysis_details": {
@@ -729,6 +922,7 @@ def enhanced_vcp_obv_scan(symbol):
                 "breakout": breakout_details,
                 "higher_lows": higher_lows_details,
                 "volume": volume_details,
+                "xunlong": xunlong_details,
                 "obv_analysis": obv_details,
                 "extension_filter": extension_details,  # NEW
             }
@@ -740,10 +934,168 @@ def enhanced_vcp_obv_scan(symbol):
         print(f"分析 {symbol} 增强VCP+OBV模式时出错: {e}")
         return None
 
+def save_vcp_obv_results_to_markdown(results):
+    """Persist scan results to a dated markdown file under RESULTS_DIR.
+
+    Generates a report covering top candidates with full per-component
+    breakdowns (trend / breakout / higher lows / volume / Xunlongjue / OBV).
+    Safe to call with an empty list (returns silently).
+    """
+    if not results:
+        return
+
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    current_date = datetime.now().strftime('%Y%m%d')
+    filename = f"{current_date}-vcp-obv-xunlong.md"
+    filepath = os.path.join(RESULTS_DIR, filename)
+
+    top_results = sorted(results, key=lambda x: x['total_score'], reverse=True)
+
+    out = []
+    out.append(f"# VCP + OBV + 寻龙诀 Analysis Report — {datetime.now().strftime('%Y-%m-%d')}")
+    out.append("")
+    out.append("**Methodology**: Mark Minervini Trend Template + OBV 21-day MA + Xunlongjue Panel V1")
+    out.append("")
+    out.append(f"- Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    out.append(f"- Stocks Found: {len(results)}")
+    out.append("- Scoring: **50 pts max** = Trend 10 + Breakout 6 + Higher Lows 3 + Volume 6 + 寻龙诀 10 + OBV 14")
+    out.append("- Hard filter: extension / late-breakout names removed before scoring")
+    out.append("")
+    out.append("---")
+    out.append("")
+    out.append("## 🏆 Top Candidates")
+    out.append("")
+
+    for i, r in enumerate(top_results[:25], 1):
+        symbol = r['symbol']
+        category = r['vcp_category']
+        score = r['total_score']
+        max_score = r.get('max_score', 50)
+        price = r['current_price']
+        change = r['price_change_pct']
+        mc_b = r['market_cap_billions']
+        scores = r['component_scores']
+        details = r['analysis_details']
+
+        is_stage2 = details.get('trend_template', {}).get('is_stage2', False)
+        stage2_badge = " 🚀 **STAGE 2**" if is_stage2 else ""
+
+        out.append(f"### {i}. **{symbol}** — {category}{stage2_badge}")
+        out.append("")
+        out.append("**📈 Stock Info**")
+        out.append(f"- Price: ${price} ({change:+.1f}%)")
+        out.append(f"- Market Cap: ${mc_b:.1f}B")
+        out.append(f"- **Total Score: {score}/{max_score}**")
+        out.append("")
+        out.append("**📊 Component Scores**")
+        out.append(f"- Trend Template: {scores['trend_score']}/10")
+        out.append(f"- Breakout Readiness: {scores['breakout_score']}/6")
+        out.append(f"- Higher Lows: {scores['higher_lows_score']}/3")
+        out.append(f"- Volume Contraction: {scores['volume_score']}/6")
+        out.append(f"- 寻龙诀 (Xunlongjue): {scores.get('xunlong_score', 0)}/10")
+        out.append(f"- OBV Analysis: {scores['obv_score']}/14")
+        out.append("")
+
+        # Full breakdown only for the top 10
+        if i <= 10:
+            tt = details.get('trend_template', {})
+            out.append(f"**🎯 Mark Minervini Trend Template ({tt.get('criteria_met', 0)}/10)**")
+            out.append(f"- Price > MA50: {'✅' if tt.get('price_above_ma50') else '❌'}")
+            out.append(f"- Price > MA150: {'✅' if tt.get('price_above_ma150') else '❌'}")
+            out.append(f"- Price > MA200: {'✅' if tt.get('price_above_ma200') else '❌'}")
+            out.append(f"- MA Alignment (50>150>200): {'✅' if tt.get('ma50_above_ma150') and tt.get('ma150_above_ma200') else '❌'}")
+            out.append(f"- MA200 Rising: {'✅' if tt.get('ma200_rising') else '❌'}")
+            out.append(f"- Within 25% of 52w High ({tt.get('distance_from_52w_high', 0)}%): {'✅' if tt.get('within_25pct_high') else '❌'}")
+            out.append(f"- Above 30% of 52w Low ({tt.get('above_52w_low_pct', 0)}%): {'✅' if tt.get('above_30pct_52w_low') else '❌'}")
+            out.append(f"- Relative Strength (3m: {tt.get('price_performance_3m', 0)}%): {'✅' if tt.get('relative_strength') else '❌'}")
+            out.append("")
+
+            br = details.get('breakout', {})
+            out.append("**🚀 Breakout Readiness**")
+            out.append(f"- Near 100-day High: {'✅' if br.get('near_100day_high') else '❌'}")
+            out.append(f"- Within 7% of Daily High ({br.get('distance_to_daily_high', 0)}%): {'✅' if br.get('within_7pct_daily_high') else '❌'}")
+            out.append(f"- Within 20% of Weekly High: {'✅' if br.get('within_20pct_weekly_high') else '❌'}")
+            out.append(f"- Below Resistance (not yet broken out): {'✅' if br.get('below_daily_high') else '❌'}")
+            if br.get('already_broken_out'):
+                out.append(f"- ⚠️ ATR breakout penalty: -{br.get('breakout_penalty', 0)} ({br.get('penalty_reason', '')})")
+            out.append("")
+
+            hl = details.get('higher_lows', {})
+            out.append("**📈 Higher Lows Pattern**")
+            out.append(f"- 10-day: {'✅' if hl.get('higher_low_10d') else '❌'}")
+            out.append(f"- 20-day: {'✅' if hl.get('higher_low_20d') else '❌'}")
+            out.append(f"- 30-day: {'✅' if hl.get('higher_low_30d') else '❌'}")
+            out.append("")
+
+            vol = details.get('volume', {})
+            cs = vol.get('contracting_signals', 0)
+            ts = vol.get('total_signals', 6)
+            out.append(f"**📊 Volume Contraction ({cs}/{ts})**")
+            for p in (5, 10, 15, 20, 25, 30):
+                out.append(f"- {p}-day: {'✅' if vol.get(f'volume_contracting_{p}d') else '❌'}")
+            out.append("")
+
+            xl = details.get('xunlong', {})
+            out.append(f"**🐉 寻龙诀 Panel ({scores.get('xunlong_score', 0)}/10)**")
+            out.append(f"- bbuy crossover (recent): {'✅' if xl.get('bbuy_recent') else '❌'} (today={'✅' if xl.get('bbuy_today') else '❌'})")
+            out.append(f"- Trend rising (t0>t1>t2): {'✅' if xl.get('trend_rising') else '❌'} ({xl.get('trend_t2', 0)} → {xl.get('trend_t1', 0)} → {xl.get('trend_t0', 0)})")
+            out.append(f"- Trend > 0 (active uptrend): {'✅' if xl.get('trend_active') else '❌'}")
+            out.append(f"- RSI rising in 50–70 band (RSI={xl.get('rsi', 0)}): {'✅' if xl.get('rsi_constructive') else '❌'}")
+            out.append(f"- No red bar (varr1 cross-under 82) in last 3 bars: {'✅' if xl.get('no_red_signal_recent') else '❌'} (varr1={xl.get('varr1', 0)})")
+            out.append(f"- Pump indicator: {xl.get('pump', 0)}")
+            out.append("")
+
+            ob = details.get('obv_analysis', {})
+            if ob:
+                out.append(f"**💧 OBV Analysis ({scores['obv_score']}/14)**")
+                out.append(f"- OBV 21-day MA Trending Up ({ob.get('obv_ma21_change_pct', 0)}%): {'✅' if ob.get('obv_ma21_trending_up') else '❌'}")
+                out.append(f"- Accumulation Signal (OBV {ob.get('obv_change_21d_pct', 0)}% vs Price {ob.get('price_change_21d_pct', 0)}%): {'✅' if ob.get('accumulation_signal') else '❌'}")
+                out.append(f"- Price Higher Lows ({ob.get('higher_lows_count', 0)}/3): {'✅' if ob.get('price_higher_lows_confirmed') else '❌'}")
+                out.append(f"- OBV Higher High: {'✅' if ob.get('obv_higher_high') else '❌'}")
+                out.append(f"- Bullish Divergence (OBV up, price flat/down): {'✅' if ob.get('price_divergence') else '❌'}")
+                out.append("")
+            else:
+                out.append(f"**💧 OBV Analysis**: skipped (preliminary score below gate)")
+                out.append("")
+
+            out.append("---")
+            out.append("")
+        else:
+            out.append("---")
+            out.append("")
+
+    out.append("## 📚 Methodology Notes")
+    out.append("")
+    out.append("### Hard Filter — Extension / Late Breakout")
+    out.append("Stocks are excluded *before* scoring if any of the following is true:")
+    out.append("- Up > 20% in last 10 days")
+    out.append("- Trading > 8% above 20-day MA")
+    out.append("- Climactic wide-range bar (>2× ATR20) on >1.5× volume in last 3 bars")
+    out.append("- Breakout age > 1 bar over 40-day pivot")
+    out.append("")
+    out.append("### Xunlongjue (寻龙诀) Panel")
+    out.append("Translated from the Pine Script *寻龙诀 Panel V1* by bigbenv5 (MPL 2.0):")
+    out.append("- **bbuy** — `EMA((H+L+C)/3, 6)` crosses above its 5-EMA → green-bar buy trigger")
+    out.append("- **trend (t)** — KDJ-derived directional strength using a custom `xsa` smoother")
+    out.append("- **varr1** — RSI on close-changes (xsa-smoothed); cross-under 82 = warning")
+    out.append("- **RSI(14)** — standard, with rising-and-in-50-70 constructive check")
+    out.append("")
+    out.append("---")
+    out.append("")
+    out.append("*Generated by Enhanced VCP+OBV+寻龙诀 Pattern Detector*")
+    out.append("")
+
+    try:
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(out))
+        print(f"\n💾 报告已保存: {filepath}")
+    except Exception as e:
+        print(f"❌ 保存报告失败: {e}")
+
 def main():
-    """Main function for enhanced VCP+OBV scanning"""
-    print("🎯 增强VCP+OBV (Volatility Contraction Pattern + On-Balance Volume) 检测器")
-    print("基于Mark Minervini趋势模板 + OBV 21日移动平均线分析")
+    """Main function for enhanced VCP+OBV+寻龙诀 scanning"""
+    print("🎯 增强VCP + OBV + 寻龙诀 (Volatility Contraction + On-Balance Volume + Xunlongjue Panel) 检测器")
+    print("基于Mark Minervini趋势模板 + OBV 21日均线 + 寻龙诀 Panel V1 信号")
     print("=" * 70)
     
     # Scan options
@@ -769,15 +1121,16 @@ def main():
         symbols = STOCK_SYMBOLS[:25]
     
     # Set minimum score
-    min_score_input = input("请输入最低评分 (默认21分): ").strip()
-    min_score = int(min_score_input) if min_score_input.isdigit() else 21
-    
+    min_score_input = input("请输入最低评分 (默认26分): ").strip()
+    min_score = int(min_score_input) if min_score_input.isdigit() else 26
+
     # Start scanning
-    print(f"\n🎯 US Stock VCP Pattern + OBV scan")
+    print(f"\n🎯 US Stock VCP + OBV + 寻龙诀 scan")
     print(f"   - 扫描股票数量: {len(symbols)}")
-    print(f"   - 最低评分: {min_score}/40")
+    print(f"   - 最低评分: {min_score}/50")
     print(f"   - market cap: ≥$100M")
     print(f"   - OBV分析: 21日均线趋势 + 累积信号 + 更高低点")
+    print(f"   - 寻龙诀: bbuy触发 + 趋势上升 + RSI动能 + 无红柱预警")
     print(f"   - Press Ctrl+C gracefully stop")
     print("=" * 70)
     
@@ -799,7 +1152,7 @@ def main():
                 rate = (i + 1) / elapsed if elapsed > 0 else 0
                 eta = (len(symbols) - i - 1) / rate if rate > 0 else 0
                 print(f"📈 进度: {i + 1}/{len(symbols)} ({(i + 1)/len(symbols)*100:.1f}%) | "
-                      f"发现VCP+OBV: {len(results)} | 错误: {errors} | "
+                      f"发现VCP+OBV+寻龙: {len(results)} | 错误: {errors} | "
                       f"预计剩余: {eta/60:.1f}分钟")
             
             result = enhanced_vcp_obv_scan(symbol)
@@ -811,24 +1164,34 @@ def main():
                 category = result['vcp_category']
                 score = result['total_score']
                 
-                show_pattern = score >= 21
-                
+                show_pattern = score >= 26
+
                 if show_pattern:
                     price = result['current_price']
                     change = result['price_change_pct']
                     market_cap_b = result['market_cap_billions']
-                    
+
                     scores = result['component_scores']
                     details = result['analysis_details']
-                    
+
                     is_stage2 = details['trend_template'].get('is_stage2', False)
-                    stage2_indicator = " [Stage2+OBV]" if is_stage2 else ""
-                    
-                    print(f"\n{category}: {symbol} | 总分:{score}/40 | ${price} ({change:+.1f}%) | 市值${market_cap_b:.1f}B{stage2_indicator}")
-                    
-                    if score >= 28:
-                        print(f"   📊 评分详情: 趋势{scores['trend_score']}/10 + 突破{scores['breakout_score']}/7 + 低点{scores['higher_lows_score']}/3 + 成交量{scores['volume_score']}/6 + OBV{scores['obv_score']}/14")
-                        
+                    stage2_indicator = " [Stage2+OBV+寻龙]" if is_stage2 else ""
+
+                    print(f"\n{category}: {symbol} | 总分:{score}/50 | ${price} ({change:+.1f}%) | 市值${market_cap_b:.1f}B{stage2_indicator}")
+
+                    if score >= 32:
+                        print(f"   📊 评分详情: 趋势{scores['trend_score']}/10 + 突破{scores['breakout_score']}/6 + 低点{scores['higher_lows_score']}/3 + 成交量{scores['volume_score']}/6 + 寻龙{scores['xunlong_score']}/10 + OBV{scores['obv_score']}/14")
+
+                        # Xunlongjue panel breakdown
+                        xl = details.get('xunlong', {})
+                        xl_status = []
+                        xl_status.append("✅bbuy" if xl.get('bbuy_recent') else "❌bbuy")
+                        xl_status.append("✅趋势上升" if xl.get('trend_rising') else "❌趋势上升")
+                        xl_status.append("✅趋势>0" if xl.get('trend_active') else "❌趋势>0")
+                        xl_status.append("✅RSI动能" if xl.get('rsi_constructive') else "❌RSI动能")
+                        xl_status.append("✅无红柱" if xl.get('no_red_signal_recent') else "❌红柱预警")
+                        print(f"   🐉 寻龙诀({scores['xunlong_score']}/10): {' '.join(xl_status)} | t0={xl.get('trend_t0', 0)} RSI={xl.get('rsi', 0)} varr1={xl.get('varr1', 0)}")
+
                         obv_details = details['obv_analysis']
                         obv_status = []
                         obv_status.append("✅OBV21日MA上升" if obv_details.get('obv_ma21_trending_up') else "❌OBV21日MA上升")
@@ -846,23 +1209,28 @@ def main():
                 print(f"❌ {symbol} 分析失败: {e}")
     
     results.sort(key=lambda x: x['total_score'], reverse=True)
-    
+
+    # Persist results to a dated markdown file (also runs after Ctrl-C interrupt
+    # since the break above falls through to here).
+    save_vcp_obv_results_to_markdown(results)
+
     total_time = (datetime.now() - start_time).total_seconds()
     
     status = "中断" if scan_interrupted else "完成"
     print(f"\n📊 扫描{status}统计:")
     print(f"   - 处理股票: {processed}")
-    print(f"   - 发现增强VCP+OBV: {len(results)}")
+    print(f"   - 发现VCP+OBV+寻龙: {len(results)}")
     print(f"   - 错误数量: {errors}")
     print(f"   - 总用时: {total_time/60:.1f}分钟")
-    print(f"   - 平均速度: {processed/(total_time/60):.1f}个/分钟")
-    print(f"   - 增强VCP+OBV发现率: {len(results)/processed*100:.2f}%")
+    if processed > 0:
+        print(f"   - 平均速度: {processed/(total_time/60):.1f}个/分钟")
+        print(f"   - 发现率: {len(results)/processed*100:.2f}%")
     if scan_interrupted:
         print(f"   - 剩余未处理: {len(symbols) - processed} 个股票")
-    
+
     if results:
-        print(f"\n🏆 发现的增强VCP+OBV模式 (按评分排序):")
-        print("=" * 90)
+        print(f"\n🏆 发现的VCP+OBV+寻龙诀模式 (按评分排序):")
+        print("=" * 100)
         for i, result in enumerate(results[:15]):
             category = result['vcp_category']
             symbol = result['symbol']
@@ -871,9 +1239,10 @@ def main():
             change = result['price_change_pct']
             market_cap_b = result['market_cap_billions']
             obv_score = result['component_scores']['obv_score']
-            print(f"{i+1:2d}. {category} {symbol:>6} | {score:2d}/40分 | ${price:>8.2f} ({change:+6.1f}%) | ${market_cap_b:.1f}B | OBV:{obv_score}/14")
+            xl_score = result['component_scores'].get('xunlong_score', 0)
+            print(f"{i+1:2d}. {category} {symbol:>6} | {score:2d}/50分 | ${price:>8.2f} ({change:+6.1f}%) | ${market_cap_b:.1f}B | 寻龙:{xl_score}/10 OBV:{obv_score}/14")
     else:
-        print("❌ 未发现符合条件的增强VCP+OBV模式")
+        print("❌ 未发现符合条件的VCP+OBV+寻龙诀模式")
 
 if __name__ == "__main__":
     main()

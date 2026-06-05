@@ -192,6 +192,9 @@ def check_trend_template(daily_data):
     
     # 10. Relative strength (simplified - price performance vs market)
     # Using 3-month performance as proxy
+    relative_strength_good = False
+    details['relative_strength'] = False
+    details['price_performance_3m'] = 0.0
     if len(daily_data) >= 63:
         price_3m_ago = daily_data['Close'].iloc[-63]
         price_performance = (latest['Close'] - price_3m_ago) / price_3m_ago * 100
@@ -337,16 +340,22 @@ def check_volume_contracting(daily_data):
     
     return volume_contracting_confirmed, score, details
 
-def enhanced_vcp_scan(symbol):
-    """Enhanced VCP pattern detection with new criteria"""
+def enhanced_vcp_scan(symbol, *, market_cap=None, daily_data=None, weekly_data=None):
+    """Enhanced VCP pattern detection with new criteria.
+
+    market_cap / daily_data / weekly_data may be passed in by the caller to
+    avoid duplicate yfinance fetches. If None, they are fetched here.
+    """
     try:
-        # Get market cap first
-        market_cap = get_market_cap(symbol)
+        # Get market cap (skip the network call if caller already has it)
+        if market_cap is None:
+            market_cap = get_market_cap(symbol)
         if market_cap < ENHANCED_VCP_CONFIG['market_cap_min']:
             return None
-        
-        # Get data
-        daily_data, weekly_data = get_enhanced_stock_data(symbol)
+
+        # Get data (skip the network call if caller already has it)
+        if daily_data is None:
+            daily_data, weekly_data = get_enhanced_stock_data(symbol)
         if daily_data is None:
             return None
         
@@ -468,9 +477,11 @@ def scan_enhanced_vcp_patterns(symbols, min_score=10):
             
             # Get market cap first for quick filtering
             market_cap = get_market_cap(symbol)
+            daily_data = None
+            weekly_data = None
             if market_cap >= ENHANCED_VCP_CONFIG['market_cap_min']:
                 stats['market_cap_qualified'] += 1
-                
+
                 # Get data and analyze
                 daily_data, weekly_data = get_enhanced_stock_data(symbol)
                 if daily_data is not None:
@@ -516,8 +527,13 @@ def scan_enhanced_vcp_patterns(symbols, min_score=10):
                     if volume_ok:
                         stats['volume_contracting'] += 1
             
-            # Full analysis
-            result = enhanced_vcp_scan(symbol)
+            # Full analysis (reuse pre-fetched market_cap and data — no extra network calls)
+            result = enhanced_vcp_scan(
+                symbol,
+                market_cap=market_cap,
+                daily_data=daily_data,
+                weekly_data=weekly_data,
+            )
             processed += 1
             
             if result and result['total_score'] >= min_score:
