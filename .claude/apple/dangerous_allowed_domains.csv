@@ -1,0 +1,7 @@
+# Domains allowed through the Apple Claude Code security sandbox for THIS project.
+# Added so the Stock_OneClick scanner (yfinance) can fetch public US market data.
+# Scope: Yahoo Finance only. Remove these lines to revoke.
+fc.yahoo.com
+finance.yahoo.com
+query1.finance.yahoo.com
+query2.finance.yahoo.com
