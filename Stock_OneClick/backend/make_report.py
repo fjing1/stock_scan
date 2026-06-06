@@ -26,6 +26,7 @@ BACKEND_DIR = Path(__file__).resolve().parent
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 import scan_stocks as scan  # noqa: E402  — canonical buy/sell scorers (single source of truth)
+from gate_calc import gate  # noqa: E402  — regime/breadth exposure gate
 
 BASE_DIR = BACKEND_DIR.parent
 DEFAULT_WORKBOOK = BASE_DIR / "scan_result_latest.xlsx"
@@ -162,6 +163,15 @@ def _write_report(date: str, ctx: dict, buys: list, sells: list, run_stamp: str,
     for k in CTX_LABELS:
         if k in ctx:
             L.append(f"| **{k}** | {ctx[k]} |")
+    L.append("")
+    # exposure gate (from gate_calc) — the actionable exposure decision for this date
+    buy_n, sell_n = len(buys), len(sells)
+    sell_share = round(sell_n / (buy_n + sell_n), 3) if (buy_n + sell_n) else float("nan")
+    state = _state_of(ctx)
+    tg, hedge, action = gate(state, sell_share)
+    L.append(f"**📐 Exposure gate:** state `{state}` · SELL_share `{sell_share}` "
+             f"→ **target long gross {tg}%** · hedge: {hedge}")
+    L.append(f"> {action}")
     L.append("")
     # buys
     scored = [b for b in buys if pd.notna(b["score"])]

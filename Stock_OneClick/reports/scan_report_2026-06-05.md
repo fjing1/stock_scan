@@ -13,6 +13,9 @@
 | **指数快照** | SPX -2.64% / 5日-2.59%；QQQ -4.80% / 5日-4.50%；IWM -3.55% / 5日-3.02%；RSP -1.42% / 5日-0.48%；VIX +39.68% / 5日+40.40%；HYG -0.50% / 5日-1.10%；SMH -9.22% / 5日-4.88%；XLU +0.93% / 5日-0.16% |
 | **策略提示** | 买点整体降权；暂停追高，高beta和进攻板块只观察；优先现金流/防守/低beta。 |
 
+**📐 Exposure gate:** state `看跌/避险` · SELL_share `0.933` → **target long gross 0%** · hedge: cash; optional small SPY/QQQ put
+> RISK-OFF (state=看跌/避险): 0% long, 100% cash
+
 ## 🟢 Buy samples (4)
 
 | 观海买点分 | symbol | sector | rule | D0 close | fwd % (D) |

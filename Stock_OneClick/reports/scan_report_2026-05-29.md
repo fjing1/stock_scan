@@ -13,6 +13,9 @@
 | **指数快照** | SPX +0.22% / 5日+1.80%；QQQ +0.37% / 5日+3.33%；IWM -0.55% / 5日+2.81%；RSP +0.28% / 5日+2.01%；VIX -2.67% / 5日-8.26%；HYG +0.10% / 5日+0.51%；SMH -0.15% / 5日+5.47%；XLU -0.47% / 5日-1.29% |
 | **策略提示** | 市场环境允许正常观察买点；高分进攻股优先级更高。 |
 
+**📐 Exposure gate:** state `强势/中性看涨` · SELL_share `0.409` → **target long gross 0%** · hedge: start index hedge, rest cash
+> CAUTION (breadth SELL_share=0.41>=0.40): no NEW longs, begin hedge
+
 ## 🟢 Buy samples (13)
 
 *Forward (close-to-close from D0, last tracked day): mean -4.74%, hit-rate 23% over 13 with data.*
