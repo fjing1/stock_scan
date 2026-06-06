@@ -64,6 +64,7 @@ python3 intraday_dashboard_app.py   # single-symbol + sector-stats Tkinter app
 # 5. Dev tools (use a venv with pandas/numpy/openpyxl, e.g. the repo's vcp_env):
 ../../vcp_env/bin/python tests/test_engine.py            # indicator + scoring tests
 ../../vcp_env/bin/python backtest_score.py --source both # 观海买点分 vs. forward-return calibration
+../../vcp_env/bin/python make_report.py                  # write dated Markdown reports to ../reports/
 ```
 
 Useful environment toggles (see [DATA_AND_OUTPUTS.md](DATA_AND_OUTPUTS.md) for the full table):
