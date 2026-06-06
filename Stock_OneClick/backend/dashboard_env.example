@@ -1,0 +1,18 @@
+# Stock OneClick Web Dashboard intraday data source
+#
+# Copy the export line into your shell profile, or run it before launching
+# run_web_dashboard.command. Do not commit/share your real key.
+
+# Free/default intraday source for the dashboard.
+# Alpaca free stock data uses IEX feed, so it may differ from full-market SIP/TradingView data.
+export STOCK_DASHBOARD_DATA_PROVIDER=alpaca
+export ALPACA_API_KEY=your_alpaca_api_key_here
+export ALPACA_SECRET_KEY=your_alpaca_secret_key_here
+
+# Optional paid/alternate source.
+# export STOCK_DASHBOARD_DATA_PROVIDER=polygon
+# export POLYGON_API_KEY=your_polygon_api_key_here
+
+# Optional tuning
+export STOCK_DASHBOARD_CACHE_TTL_SECONDS=240
+export STOCK_DASHBOARD_REQUEST_DELAY_SECONDS=0.15

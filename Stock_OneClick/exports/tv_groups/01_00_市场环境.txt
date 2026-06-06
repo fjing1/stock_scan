@@ -1,0 +1,2 @@
+AMEX:SPY
+UVXY
