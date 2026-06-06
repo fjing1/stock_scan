@@ -32,6 +32,7 @@ yfinance / Polygon / Alpaca, for watching buy points form during the session.
 | **[COMPONENTS.md](COMPONENTS.md)** | The non-engine programs: the three dashboards + shared data-provider layer, the Tkinter scan GUI, the TradingView watchlist importer, and the two standalone tools (`dual_mode_scan_v1.py`, `stock_list_10B.py`). |
 | **[DATA_AND_OUTPUTS.md](DATA_AND_OUTPUTS.md)** | File layout, the input-workbook schema, the output workbook's 6 fixed sheets + per-date sheets, all TradingView `.txt` exports, the `_latest` / timestamp / date naming conventions, and the full environment-variable + configuration reference. |
 | **[IMPROVEMENTS.md](IMPROVEMENTS.md)** | Changelog of the 2026-06-06 reliability / performance / architecture changes, the new test suite + backtest tool, and the (deferred) monolith-split plan. |
+| **[STRATEGY_PROPOSAL.md](STRATEGY_PROPOSAL.md)** | Data-grounded proposal for how to (carefully) try to profit: the regime-gated defensive setup, the score-calibration finding (the buy score has **no edge yet**), risk limits, and a forward-validation protocol. Backed by `build_dataset.py` / `score_calibration.py` / `gate_calc.py` / `benchmark_ma.py`. |
 
 The original author docs are kept alongside the code:
 `../RELEASE_2026_06_V1.md` (release notes) and
@@ -63,8 +64,13 @@ python3 intraday_dashboard_app.py   # single-symbol + sector-stats Tkinter app
 
 # 5. Dev tools (use a venv with pandas/numpy/openpyxl, e.g. the repo's vcp_env):
 ../../vcp_env/bin/python tests/test_engine.py            # indicator + scoring tests
+../../vcp_env/bin/python tests/test_strategy_tools.py    # strategy-tool tests (gate / MA / IC)
 ../../vcp_env/bin/python backtest_score.py --source both # 观海买点分 vs. forward-return calibration
 ../../vcp_env/bin/python make_report.py                  # write dated Markdown reports to ../reports/
+../../vcp_env/bin/python build_dataset.py                # build ../reports/strategy_dataset.csv (labeled signals)
+../../vcp_env/bin/python score_calibration.py            # IC / sub-feature analysis of the scores
+../../vcp_env/bin/python gate_calc.py                    # regime-exposure gate -> ../reports/gate_log.csv
+../../vcp_env/bin/python benchmark_ma.py --window 5      # the 'dumb' MA de-risk benchmark to beat
 ```
 
 Useful environment toggles (see [DATA_AND_OUTPUTS.md](DATA_AND_OUTPUTS.md) for the full table):
