@@ -13,7 +13,7 @@
 | **指数快照** | SPX +0.37% / 5日+0.88%；QQQ +0.42% / 5日+1.21%；IWM +0.93% / 5日+2.71%；RSP +0.91% / 5日+2.49%；VIX -0.36% / 5日-9.39%；HYG +0.01% / 5日+0.57%；SMH +1.49% / 5日+3.59%；XLU +0.78% / 5日+3.37% |
 | **策略提示** | 市场环境允许正常观察买点；高分进攻股优先级更高。 |
 
-## 🟢 Buy samples (32)
+## 🟢 Buy samples (31)
 
 *Forward (close-to-close from D0, last tracked day): mean -1.77%, hit-rate 35% over 31 with data.*
 
@@ -51,12 +51,13 @@
 | 77 | **NNE** | 08 核能 | 第一买入点 | 26.73 | -11.86% (D9) |
 | 76 | **NUE** | 13 材料 / 电网 | 买入跟踪 + 正式买入 | 232.00 | +9.65% (D9) |
 
-## 🔴 Sell samples (2)
+## 🔴 Sell samples (1)
 
-| symbol | sector | rule | D0 close | fwd % (D) |
-|--------|--------|------|--------:|:--:|
-| **HAL** | 14 能源 | 正式卖出 | 41.47 | -5.52% (D9) |
-| **NAN** |  |  | nan | — |
+*Forward (close-to-close from D0, last tracked day): mean -5.52%; price fell on 100% of 1 with data (for a sell, lower = correct).*
+
+| 卖出分 | symbol | sector | rule | D0 close | fwd % (D) |
+|:--:|--------|--------|------|--------:|:--:|
+| 96 | **HAL** | 14 能源 | 正式卖出 | 41.47 | -5.52% (D9) |
 
 ---
-*观海买点分 = 0–100 buy score (higher = more attractive). fwd % = forward return from the D0 anchor close, no costs. Not investment advice.*
+*观海买点分 = 0–100 **buy** score · 卖出分 = 0–100 **sell**-conviction score (both: higher = stronger). fwd % = forward return from the D0 anchor close, no costs. Not investment advice.*

@@ -13,7 +13,7 @@
 | **指数快照** | SPX +0.41% / 5日+0.27%；QQQ -0.48% / 5日+0.68%；IWM +1.51% / 5日-0.01%；RSP +0.76% / 5日+1.24%；VIX -4.11% / 5日-2.16%；HYG +0.19% / 5日-0.50%；SMH -1.63% / 5日+4.62%；XLU +0.53% / 5日-1.55% |
 | **策略提示** | 趋势未完全转空，但仓位和追涨要收敛；优先强趋势或防守现金流。 |
 
-## 🟢 Buy samples (29)
+## 🟢 Buy samples (28)
 
 *Forward (close-to-close from D0, last tracked day): mean -4.47%, hit-rate 21% over 28 with data.*
 
@@ -48,18 +48,19 @@
 | 74 | **PANW** | 12 网络安全 | 预警买入 | 279.25 | -2.58% (D1) |
 | 70 | **IRDM** | 17 商业航天 | 预警买入 | 52.07 | -9.05% (D1) |
 
-## 🔴 Sell samples (8)
+## 🔴 Sell samples (7)
 
-| symbol | sector | rule | D0 close | fwd % (D) |
-|--------|--------|------|--------:|:--:|
-| **AVGO** | 03 GPU / AI芯片 | 正式卖出 | 418.91 | -7.92% (D1) |
-| **BHP** | 13 材料 / 电网 | 正式卖出 | 88.78 | -6.83% (D1) |
-| **IREN** | 21 数据中心 | 正式卖出 | 61.86 | -12.14% (D1) |
-| **MOS** | 18 农业/化肥 | 正式卖出 | 22.90 | -2.88% (D1) |
-| **RIO** | 13 材料 / 电网 | 正式卖出 | 105.40 | -4.47% (D1) |
-| **SOLS** | 23 杂项 | 正式卖出 | 84.13 | -3.70% (D1) |
-| **TLN** | 07 数据中心电力 | 正式卖出 | 378.08 | -3.53% (D1) |
-| **NAN** |  |  | nan | — |
+*Forward (close-to-close from D0, last tracked day): mean -5.92%; price fell on 100% of 7 with data (for a sell, lower = correct).*
+
+| 卖出分 | symbol | sector | rule | D0 close | fwd % (D) |
+|:--:|--------|--------|------|--------:|:--:|
+| 100 | **BHP** | 13 材料 / 电网 | 正式卖出 | 88.78 | -6.83% (D1) |
+| 100 | **IREN** | 21 数据中心 | 正式卖出 | 61.86 | -12.14% (D1) |
+| 96 | **SOLS** | 23 杂项 | 正式卖出 | 84.13 | -3.70% (D1) |
+| 93 | **AVGO** | 03 GPU / AI芯片 | 正式卖出 | 418.91 | -7.92% (D1) |
+| 93 | **RIO** | 13 材料 / 电网 | 正式卖出 | 105.40 | -4.47% (D1) |
+| 89 | **TLN** | 07 数据中心电力 | 正式卖出 | 378.08 | -3.53% (D1) |
+| 86 | **MOS** | 18 农业/化肥 | 正式卖出 | 22.90 | -2.88% (D1) |
 
 ---
-*观海买点分 = 0–100 buy score (higher = more attractive). fwd % = forward return from the D0 anchor close, no costs. Not investment advice.*
+*观海买点分 = 0–100 **buy** score · 卖出分 = 0–100 **sell**-conviction score (both: higher = stronger). fwd % = forward return from the D0 anchor close, no costs. Not investment advice.*

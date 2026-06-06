@@ -104,6 +104,29 @@ def test_score_overbought_penalty():
     assert scan.score_buy_signal_row(row) == 61.0
 
 
+def test_sell_score_non_sell_is_nan():
+    assert pd.isna(scan.score_sell_signal_row(pd.Series({"signal_side": "BUY", "signal_type": "正式买入"})))
+
+
+def test_sell_score_formal_clamps_to_100():
+    # 50 +20(正式卖出) +8(1出) +10(rank>=0.85) +7(RSI 55-70) +5(L2>=60)
+    #    +4(H4_FJ>=60) +3(H4_RSI<=55) = 107 -> clamp 100
+    row = pd.Series({
+        "signal_side": "SELL", "signal_type": "正式卖出", "model": "D1_SELL_1出",
+        "rank120": 0.90, "RSI": 62.0, "L2_trend": 70.0, "H4_FJ": 70.0, "H4_RSI": 50.0,
+    })
+    assert scan.score_sell_signal_row(row) == 100.0
+
+
+def test_sell_score_warning_midrange_exact():
+    # 50 +14(预警卖出) +8(1出 in model) +3(rank 0.45-0.65) -6(RSI<35) = 69
+    row = pd.Series({
+        "signal_side": "SELL", "signal_type": "预警卖出", "model": "H4_SELL_1出",
+        "rank120": 0.50, "RSI": 30.0,
+    })
+    assert scan.score_sell_signal_row(row) == 69.0
+
+
 def test_realtime_dashboard_score_delegates_to_engine():
     try:
         import realtime_dashboard as rt

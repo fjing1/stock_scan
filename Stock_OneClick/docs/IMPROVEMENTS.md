@@ -83,3 +83,21 @@ $ ../../vcp_env/bin/python backtest_score.py --source both   # runs; 221 obs
 Not done here (needs a live run): an end-to-end nightly scan, which requires
 network + the input workbook + macOS. The changes preserve the existing output
 schema, so `scan_result_latest.xlsx` and all exports are unaffected in shape.
+
+---
+
+## Update — sell-conviction score (卖出分) + dated reports
+
+- **`score_sell_signal_row` (scan_stocks.py)** — answers "why do buys have a
+  score but sells don't?": the original scorer returned `NaN` for SELL rows. Added
+  a symmetric 0–100 sell score (formal vs. warning sell, `1出` confirmation, high
+  rank120 = room to fall, overbought-rolling-over RSI, topping L2/4H). Written to
+  a new `RawSignals.sell_score` column (future runs) and unit-tested. See
+  [SIGNAL_LOGIC.md §7.1](SIGNAL_LOGIC.md#71-卖出分--the-sell-conviction-score-score_sell_signal_row-added-2026-06).
+- **`backend/make_report.py`** — generates the dated reports in
+  [`../reports/`](../reports/). Now attaches 观海买点分 to buys and 卖出分 to
+  sells (computed from RawSignals across recent runs via the engine's scorers),
+  drops the row cap (full lists, sorted by score), and adds a "Top sell" column to
+  the index. A trailing-`NaN` parse bug that inflated each block's count by one
+  was fixed.
+- Tests: **17 passing** (added 3 sell-score cases).

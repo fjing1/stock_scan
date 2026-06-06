@@ -13,7 +13,7 @@
 | **指数快照** | SPX +0.58% / 5日+1.76%；QQQ +0.84% / 5日+3.15%；IWM +0.57% / 5日+4.34%；RSP +0.37% / 5日+2.17%；VIX -3.38% / 5日-6.09%；HYG +0.12% / 5日+0.46%；SMH +0.73% / 5日+6.23%；XLU -1.13% / 5日+0.27% |
 | **策略提示** | 市场环境允许正常观察买点；高分进攻股优先级更高。 |
 
-## 🟢 Buy samples (22)
+## 🟢 Buy samples (21)
 
 *Forward (close-to-close from D0, last tracked day): mean +0.24%, hit-rate 52% over 21 with data.*
 
@@ -41,15 +41,16 @@
 | 68 | **FTNT** | 12 网络安全 | 买入跟踪 + 预警买入 | 129.70 | +11.55% (D6) |
 | 64 | **CRWD** | 12 网络安全 | 买入跟踪 + 预警买入 | 671.00 | +0.00% (D6) |
 
-## 🔴 Sell samples (5)
+## 🔴 Sell samples (4)
 
-| symbol | sector | rule | D0 close | fwd % (D) |
-|--------|--------|------|--------:|:--:|
-| **AXTI** | 05 AI网络 / 光模块 | 正式卖出 | 115.70 | -23.04% (D6) |
-| **CEG** | 08 核能 | 正式卖出 | 286.31 | -11.00% (D6) |
-| **GLW** | 05 AI网络 / 光模块 | 正式卖出 | 182.97 | -2.95% (D6) |
-| **SNPS** | 04 半导体设备 / EDA | 正式卖出 | 480.64 | -3.29% (D6) |
-| **NAN** |  |  | nan | — |
+*Forward (close-to-close from D0, last tracked day): mean -10.07%; price fell on 100% of 4 with data (for a sell, lower = correct).*
+
+| 卖出分 | symbol | sector | rule | D0 close | fwd % (D) |
+|:--:|--------|--------|------|--------:|:--:|
+| 93 | **AXTI** | 05 AI网络 / 光模块 | 正式卖出 | 115.70 | -23.04% (D6) |
+| 93 | **GLW** | 05 AI网络 / 光模块 | 正式卖出 | 182.97 | -2.95% (D6) |
+| 93 | **SNPS** | 04 半导体设备 / EDA | 正式卖出 | 480.64 | -3.29% (D6) |
+| 86 | **CEG** | 08 核能 | 正式卖出 | 286.31 | -11.00% (D6) |
 
 ---
-*观海买点分 = 0–100 buy score (higher = more attractive). fwd % = forward return from the D0 anchor close, no costs. Not investment advice.*
+*观海买点分 = 0–100 **buy** score · 卖出分 = 0–100 **sell**-conviction score (both: higher = stronger). fwd % = forward return from the D0 anchor close, no costs. Not investment advice.*

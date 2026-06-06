@@ -13,7 +13,7 @@
 | **指数快照** | SPX +0.26% / 5日+1.69%；QQQ +0.60% / 5日+3.51%；IWM -0.50% / 5日+1.35%；RSP +0.18% / 5日+1.27%；VIX +4.77% / 5日-3.25%；HYG -0.59% / 5日-0.09%；SMH +1.48% / 5日+5.46%；XLU -2.97% / 5日-4.96% |
 | **策略提示** | 趋势未完全转空，但仓位和追涨要收敛；优先强趋势或防守现金流。 |
 
-## 🟢 Buy samples (23)
+## 🟢 Buy samples (22)
 
 *Forward (close-to-close from D0, last tracked day): mean -7.55%, hit-rate 23% over 22 with data.*
 
@@ -42,18 +42,19 @@
 | 83 | **IHF** | 20 医疗 | 正式买入 + 预警买入 | 50.55 | +2.73% (D4) |
 | 81 | **FLNC** | 09 储能 | 正式买入 + 预警买入 | 27.15 | -15.62% (D4) |
 
-## 🔴 Sell samples (8)
+## 🔴 Sell samples (7)
 
-| symbol | sector | rule | D0 close | fwd % (D) |
-|--------|--------|------|--------:|:--:|
-| **ASTS** | 17 商业航天 | 正式卖出 | 105.65 | -11.41% (D4) |
-| **CAMT** | 19 COWOS | 正式卖出 | 163.09 | +0.69% (D4) |
-| **D** | 15 公用事业 | 正式卖出 | 64.61 | +3.54% (D4) |
-| **ENTG** | 19 COWOS | 正式卖出 | 135.73 | -7.60% (D4) |
-| **META** | 02 超巨 | 正式卖出 | 600.47 | -1.24% (D4) |
-| **NVTS** | 07 数据中心电力 | 正式卖出 | 24.86 | +0.89% (D4) |
-| **TSLA** | 02 超巨 | 正式卖出 | 415.88 | -5.98% (D4) |
-| **NAN** |  |  | nan | — |
+*Forward (close-to-close from D0, last tracked day): mean -3.02%; price fell on 57% of 7 with data (for a sell, lower = correct).*
+
+| 卖出分 | symbol | sector | rule | D0 close | fwd % (D) |
+|:--:|--------|--------|------|--------:|:--:|
+| 100 | **NVTS** | 07 数据中心电力 | 正式卖出 | 24.86 | +0.89% (D4) |
+| 96 | **ASTS** | 17 商业航天 | 正式卖出 | 105.65 | -11.41% (D4) |
+| 93 | **D** | 15 公用事业 | 正式卖出 | 64.61 | +3.54% (D4) |
+| 93 | **ENTG** | 19 COWOS | 正式卖出 | 135.73 | -7.60% (D4) |
+| 89 | **CAMT** | 19 COWOS | 正式卖出 | 163.09 | +0.69% (D4) |
+| 89 | **TSLA** | 02 超巨 | 正式卖出 | 415.88 | -5.98% (D4) |
+| 86 | **META** | 02 超巨 | 正式卖出 | 600.47 | -1.24% (D4) |
 
 ---
-*观海买点分 = 0–100 buy score (higher = more attractive). fwd % = forward return from the D0 anchor close, no costs. Not investment advice.*
+*观海买点分 = 0–100 **buy** score · 卖出分 = 0–100 **sell**-conviction score (both: higher = stronger). fwd % = forward return from the D0 anchor close, no costs. Not investment advice.*

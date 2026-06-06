@@ -16,14 +16,20 @@ from __future__ import annotations
 
 import argparse
 import re
+import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 BACKEND_DIR = Path(__file__).resolve().parent
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+import scan_stocks as scan  # noqa: E402  — canonical buy/sell scorers (single source of truth)
+
 BASE_DIR = BACKEND_DIR.parent
 DEFAULT_WORKBOOK = BASE_DIR / "scan_result_latest.xlsx"
+HISTORY_DIR = BASE_DIR / "history"
 REPORTS_DIR = BASE_DIR / "reports"
 
 CTX_LABELS = ["市场环境", "日线判断", "4H提示", "轮动判断", "指数快照", "策略提示"]
@@ -31,8 +37,10 @@ STOP_MARKERS = ("Top5统计", "排名", "触发样本", "市场环境", "No sign
 
 
 def _is_stop(cell) -> bool:
-    s = str(cell or "").strip()
-    return (not s) or any(m in s for m in STOP_MARKERS)
+    if cell is None or (isinstance(cell, float) and pd.isna(cell)):
+        return True
+    s = str(cell).strip()
+    return (not s) or s.lower() == "nan" or any(m in s for m in STOP_MARKERS)
 
 
 def _last_pct(row_vals, pct_cols):
@@ -49,6 +57,42 @@ def _dnum(h):
         return int(str(h)[1:].split("_", 1)[0])
     except Exception:
         return 0
+
+
+def _build_score_lookup() -> dict:
+    """Map (symbol, signal_date_iso, side) -> score, from the indicator fields
+    in RawSignals across the latest workbook + recent history runs. Sells get a
+    score even though the per-date follow-up sheets don't carry one (those sheets
+    lack the rank120/RSI/etc. columns the scorer needs). Uses the engine's
+    canonical scorers so the logic stays in one place."""
+    lut: dict = {}
+    paths = [DEFAULT_WORKBOOK] if DEFAULT_WORKBOOK.exists() else []
+    pat = re.compile(r"scan_result_(\d{8})_")
+    for p in sorted(HISTORY_DIR.glob("scan_result_*.xlsx")):
+        m = pat.search(p.name)
+        if m and m.group(1) >= "20260520":   # recent (current-format) runs only
+            paths.append(p)
+    for p in paths:
+        for side, fn in (("BUY", scan.score_buy_signal_row), ("SELL", scan.score_sell_signal_row)):
+            try:
+                rows = scan._read_signal_rows_from_result(p, side)
+            except Exception:
+                continue
+            if rows is None or rows.empty or not {"symbol", "signal_date"}.issubset(rows.columns):
+                continue
+            rows = rows.copy()
+            rows["symbol"] = rows["symbol"].astype(str).str.strip().str.upper()
+            rows["signal_date"] = pd.to_datetime(rows["signal_date"], errors="coerce").dt.date
+            for _, r in rows.iterrows():
+                d = r["signal_date"]
+                if pd.isna(d):
+                    continue
+                sc = fn(r)
+                if pd.isna(sc):
+                    continue
+                key = (r["symbol"], d.isoformat(), side)
+                lut[key] = sc if key not in lut else max(lut[key], sc)
+    return lut
 
 
 def _parse_date_sheet(raw: pd.DataFrame):
@@ -104,7 +148,7 @@ def _state_of(ctx) -> str:
     return raw.split("（")[0].strip() or "—"
 
 
-def _write_report(date: str, ctx: dict, buys: list, sells: list, run_stamp: str) -> str:
+def _write_report(date: str, ctx: dict, buys: list, sells: list, run_stamp: str, score_lookup: dict) -> str:
     L = []
     L.append(f"# 📊 Scan Report — {date}")
     L.append("")
@@ -141,26 +185,33 @@ def _write_report(date: str, ctx: dict, buys: list, sells: list, run_stamp: str)
     else:
         L.append("_No buy triggers this date._")
     L.append("")
-    # sells
+    # sells — attach the sell-conviction score (卖出分) from the indicator data
+    for s in sells:
+        s["score"] = score_lookup.get((s["symbol"], date, "SELL"), np.nan)
+    sells_sorted = sorted(sells, key=lambda s: (-(s["score"] if pd.notna(s["score"]) else -1.0), s["symbol"]))
     L.append(f"## 🔴 Sell samples ({len(sells)})")
     L.append("")
     if sells:
-        cap = 25
-        L.append("| symbol | sector | rule | D0 close | fwd % (D) |")
-        L.append("|--------|--------|------|--------:|:--:|")
-        for s in sells[:cap]:
+        with_fwd = [s for s in sells if pd.notna(s["fwd"])]
+        if with_fwd:
+            mean_fwd = float(np.mean([s["fwd"] for s in with_fwd]))
+            down = np.mean([1.0 if s["fwd"] < 0 else 0.0 for s in with_fwd])
+            L.append(f"*Forward (close-to-close from D0, last tracked day): mean {mean_fwd:+.2%}; "
+                     f"price fell on {down:.0%} of {len(with_fwd)} with data (for a sell, lower = correct).*")
+            L.append("")
+        L.append("| 卖出分 | symbol | sector | rule | D0 close | fwd % (D) |")
+        L.append("|:--:|--------|--------|------|--------:|:--:|")
+        for s in sells_sorted:
             d = f"{_fmt_pct(s['fwd'])} (D{s['day']})" if pd.notna(s["fwd"]) else "—"
-            L.append(f"| **{s['symbol']}** | {s['sector']} | {s['rule'].replace('|','+')} | "
-                     f"{s['d0_close']:.2f} | {d} |")
-        if len(sells) > cap:
-            L.append(f"| … | +{len(sells) - cap} more | | | |")
+            L.append(f"| {_fmt_score(s['score'])} | **{s['symbol']}** | {s['sector']} | "
+                     f"{s['rule'].replace('|','+')} | {s['d0_close']:.2f} | {d} |")
     else:
         L.append("_No sell triggers this date._")
     L.append("")
     L.append("---")
-    L.append("*观海买点分 = 0–100 buy score (higher = more attractive). "
-             "fwd % = forward return from the D0 anchor close, no costs. "
-             "Not investment advice.*")
+    L.append("*观海买点分 = 0–100 **buy** score · 卖出分 = 0–100 **sell**-conviction score "
+             "(both: higher = stronger). fwd % = forward return from the D0 anchor close, "
+             "no costs. Not investment advice.*")
     L.append("")
     return "\n".join(L)
 
@@ -191,12 +242,13 @@ def main() -> int:
     date_sheets.sort(reverse=True)
 
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    score_lookup = _build_score_lookup()
     index_rows = []
     written = 0
     for date in date_sheets:
         raw = pd.read_excel(xls, date, header=None)
         ctx, buys, sells = _parse_date_sheet(raw)
-        md = _write_report(date, ctx, buys, sells, run_stamp)
+        md = _write_report(date, ctx, buys, sells, run_stamp, score_lookup)
         (REPORTS_DIR / f"scan_report_{date}.md").write_text(md, encoding="utf-8")
         written += 1
         top = ""
@@ -204,7 +256,13 @@ def main() -> int:
         if scored:
             t = max(scored, key=lambda b: b["score"])
             top = f"{t['symbol']} ({t['score']:.0f})"
-        index_rows.append((date, _state_of(ctx), len(buys), len(sells), top))
+        top_sell = ""
+        sell_sc = [(score_lookup.get((s["symbol"], date, "SELL"), np.nan), s["symbol"]) for s in sells]
+        sell_sc = [(sc, sym) for sc, sym in sell_sc if pd.notna(sc)]
+        if sell_sc:
+            sc, sym = max(sell_sc)
+            top_sell = f"{sym} ({sc:.0f})"
+        index_rows.append((date, _state_of(ctx), len(buys), len(sells), top, top_sell))
 
     # index
     idx = ["# Scan Reports",
@@ -215,16 +273,16 @@ def main() -> int:
            "",
            f"*Latest scan run: {run_stamp} · {written} dated reports.*",
            "",
-           "| Date | Market state | Buys | Sells | Top buy | Report |",
-           "|------|--------------|:----:|:-----:|---------|--------|"]
-    for date, state, nb, ns, top in index_rows:
-        idx.append(f"| {date} | {state} | {nb} | {ns} | {top} | [report](scan_report_{date}.md) |")
+           "| Date | Market state | Buys | Sells | Top buy | Top sell | Report |",
+           "|------|--------------|:----:|:-----:|---------|----------|--------|"]
+    for date, state, nb, ns, top, tops in index_rows:
+        idx.append(f"| {date} | {state} | {nb} | {ns} | {top} | {tops} | [report](scan_report_{date}.md) |")
     idx.append("")
     (REPORTS_DIR / "README.md").write_text("\n".join(idx), encoding="utf-8")
 
     print(f"Wrote {written} reports + index to {REPORTS_DIR}")
-    for date, state, nb, ns, top in index_rows:
-        print(f"  {date}  {state:<10}  buys={nb:<3} sells={ns:<3} top={top}")
+    for date, state, nb, ns, top, tops in index_rows:
+        print(f"  {date}  {state:<10}  buys={nb:<3} sells={ns:<3} top_buy={top:<14} top_sell={tops}")
     return 0
 
 

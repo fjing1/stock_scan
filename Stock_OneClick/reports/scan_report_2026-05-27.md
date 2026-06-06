@@ -13,7 +13,7 @@
 | **指数快照** | SPX +0.02% / 5日+2.27%；QQQ -0.11% / 5日+3.98%；IWM -0.05% / 5日+6.36%；RSP -0.07% / 5日+2.91%；VIX -4.23% / 5日-6.59%；HYG -0.06% / 5日+0.98%；SMH -1.10% / 5日+9.47%；XLU -0.42% / 5日+1.80% |
 | **策略提示** | 市场环境允许正常观察买点；高分进攻股优先级更高。 |
 
-## 🟢 Buy samples (13)
+## 🟢 Buy samples (12)
 
 *Forward (close-to-close from D0, last tracked day): mean +2.72%, hit-rate 67% over 12 with data.*
 
@@ -32,13 +32,14 @@
 | 83 | **AMZN** | 02 超巨 | 买入跟踪 + 正式买入 + 预警买入 | 271.85 | -9.50% (D7) |
 | 81 | **UNH** | 20 医疗 | 预警买入 | 384.01 | +4.03% (D7) |
 
-## 🔴 Sell samples (3)
+## 🔴 Sell samples (2)
 
-| symbol | sector | rule | D0 close | fwd % (D) |
-|--------|--------|------|--------:|:--:|
-| **SLB** | 14 能源 | 正式卖出 | 56.50 | -2.89% (D7) |
-| **ZS** | 12 网络安全 | 正式卖出 | 126.41 | +3.46% (D7) |
-| **NAN** |  |  | nan | — |
+*Forward (close-to-close from D0, last tracked day): mean +0.29%; price fell on 50% of 2 with data (for a sell, lower = correct).*
+
+| 卖出分 | symbol | sector | rule | D0 close | fwd % (D) |
+|:--:|--------|--------|------|--------:|:--:|
+| 100 | **SLB** | 14 能源 | 正式卖出 | 56.50 | -2.89% (D7) |
+| 81 | **ZS** | 12 网络安全 | 正式卖出 | 126.41 | +3.46% (D7) |
 
 ---
-*观海买点分 = 0–100 buy score (higher = more attractive). fwd % = forward return from the D0 anchor close, no costs. Not investment advice.*
+*观海买点分 = 0–100 **buy** score · 卖出分 = 0–100 **sell**-conviction score (both: higher = stronger). fwd % = forward return from the D0 anchor close, no costs. Not investment advice.*

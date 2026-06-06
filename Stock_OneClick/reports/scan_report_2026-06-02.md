@@ -13,7 +13,7 @@
 | **指数快照** | SPX +0.13% / 5日+1.21%；QQQ +0.46% / 5日+2.17%；IWM +0.93% / 5日+0.40%；RSP +0.40% / 5日+1.16%；VIX -1.74% / 5日-7.29%；HYG +0.08% / 5日-0.35%；SMH +4.01% / 5日+4.99%；XLU +1.86% / 5日-3.15% |
 | **策略提示** | 趋势未完全转空，但仓位和追涨要收敛；优先强趋势或防守现金流。 |
 
-## 🟢 Buy samples (40)
+## 🟢 Buy samples (39)
 
 *Forward (close-to-close from D0, last tracked day): mean -8.57%, hit-rate 8% over 39 with data.*
 
@@ -64,4 +64,4 @@
 _No sell triggers this date._
 
 ---
-*观海买点分 = 0–100 buy score (higher = more attractive). fwd % = forward return from the D0 anchor close, no costs. Not investment advice.*
+*观海买点分 = 0–100 **buy** score · 卖出分 = 0–100 **sell**-conviction score (both: higher = stronger). fwd % = forward return from the D0 anchor close, no costs. Not investment advice.*

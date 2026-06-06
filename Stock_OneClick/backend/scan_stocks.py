@@ -330,7 +330,7 @@ def _write_raw_signals_sheet(writer, df_all: pd.DataFrame):
         "close", "volume", "vol_ma20",
         "L2_trend", "L2_pump", "RSI",
         "rank120", "H4_RSI", "H4_FJ", "H4_0_birth", "H4_1_birth",
-        "Gann_1_date", "Gann_1_price", "buy_score", "extra_info",
+        "Gann_1_date", "Gann_1_price", "buy_score", "sell_score", "extra_info",
     ]
     raw_df = df_all.copy() if df_all is not None else pd.DataFrame()
     for c in raw_cols:
@@ -1908,6 +1908,59 @@ def score_buy_signal_row(row: pd.Series) -> float:
     return round(max(0.0, min(100.0, score)), 1)
 
 
+def score_sell_signal_row(row: pd.Series) -> float:
+    """卖出分 (sell-conviction score), 0-100, for SELL rows only (NaN otherwise).
+
+    Symmetric mirror of score_buy_signal_row: higher = a stronger / more
+    actionable sell (top-confirmed, high in its range with room to fall,
+    overbought-and-rolling-over). Added 2026-06; the original code scored buys
+    only. Weights are a first pass — calibrate against forward returns with
+    backtest_score.py (for a sell, a NEGATIVE forward return is the "right" one).
+    """
+    if str(row.get("signal_side", "")).upper() != "SELL":
+        return np.nan
+    score = 50.0
+    signal_type = str(row.get("signal_type", ""))
+    model = str(row.get("model", ""))
+    if signal_type == "正式卖出":
+        score += 20
+    elif signal_type == "预警卖出":
+        score += 14
+    if "1出" in model or "SELL_1" in model:
+        score += 8
+
+    rank120 = pd.to_numeric(row.get("rank120", np.nan), errors="coerce")
+    if pd.notna(rank120):
+        if rank120 >= 0.85:      # high in its range -> most room to fall
+            score += 10
+        elif rank120 >= 0.65:
+            score += 7
+        elif rank120 >= 0.45:
+            score += 3
+        elif rank120 <= 0.15:    # already washed out -> little downside left
+            score -= 5
+
+    rsi = pd.to_numeric(row.get("RSI", np.nan), errors="coerce")
+    if pd.notna(rsi):
+        if 55 <= rsi <= 70:      # rolling over from strength -> prime short
+            score += 7
+        elif rsi > 70:           # overbought, but can stay bid -> smaller credit
+            score += 4
+        elif rsi < 35:           # already oversold -> bounce risk
+            score -= 6
+
+    l2 = pd.to_numeric(row.get("L2_trend", np.nan), errors="coerce")
+    if pd.notna(l2) and l2 >= 60:        # topping after a strong up-swing
+        score += 5
+    h4_fj = pd.to_numeric(row.get("H4_FJ", np.nan), errors="coerce")
+    if pd.notna(h4_fj) and h4_fj >= 60:  # 4H overheated
+        score += 4
+    h4_rsi = pd.to_numeric(row.get("H4_RSI", np.nan), errors="coerce")
+    if pd.notna(h4_rsi) and h4_rsi <= 55:  # 4H momentum fading
+        score += 3
+    return round(max(0.0, min(100.0, score)), 1)
+
+
 def export_tv_buy_signal_notes(
     buy_followup_df: pd.DataFrame,
     run_dt: datetime,
@@ -3013,6 +3066,7 @@ def main():
     df_all["run_date"] = run_date
     df_all["run_time"] = run_time
     df_all["buy_score"] = df_all.apply(score_buy_signal_row, axis=1) if not df_all.empty else np.nan
+    df_all["sell_score"] = df_all.apply(score_sell_signal_row, axis=1) if not df_all.empty else np.nan
 
     col_order = [
         "run_date", "run_time",
@@ -3021,7 +3075,7 @@ def main():
         "close", "volume", "vol_ma20",
         "L2_trend", "L2_pump", "RSI",
         "rank120", "H4_RSI", "H4_FJ", "H4_0_birth", "H4_1_birth",
-        "Gann_1_date", "Gann_1_price", "buy_score", "extra_info",
+        "Gann_1_date", "Gann_1_price", "buy_score", "sell_score", "extra_info",
     ]
     for c in col_order:
         if c not in df_all.columns:

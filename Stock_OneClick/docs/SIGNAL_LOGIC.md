@@ -209,6 +209,18 @@ buy*, *low in its base*, with *constructive-but-not-overbought* momentum. It is
 the sort key for the buy follow-up sheets and the TradingView buy lists. The
 release notes call it "观海买点分."
 
+### 7.1 卖出分 — the sell-conviction score (`score_sell_signal_row`, added 2026-06)
+The original code scored buys only (`score_buy_signal_row` returns `NaN` for any
+SELL row), so sells carried no score. A symmetric **卖出分** (0–100, higher =
+stronger sell) was added as the mirror: base **50**, **+20/+14** for 正式/预警卖出,
+**+8** if the model is `1出`/`SELL_1`-confirmed, **+** for *high* `rank120` (most
+room to fall) / overbought-rolling-over `RSI` (55–70 best) / high `L2_trend` /
+hot `H4_FJ` / fading `H4_RSI`, and **−** when already washed out (low rank, RSI
+< 35). It is written to `RawSignals.sell_score` and surfaced as 卖出分 in the
+dated reports ([DATA_AND_OUTPUTS.md](DATA_AND_OUTPUTS.md), [IMPROVEMENTS.md](IMPROVEMENTS.md)).
+Weights are a first pass — for a sell, a *negative* forward return is the "right"
+one, so calibrate with `backtest_score.py`.
+
 ---
 
 ## 8. The 14-day lifecycle & follow-up tracker

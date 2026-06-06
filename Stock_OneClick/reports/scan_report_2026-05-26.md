@@ -13,7 +13,7 @@
 | **指数快照** | SPX +0.61% / 5日+1.57%；QQQ +1.78% / 5日+3.46%；IWM +1.89% / 5日+5.27%；RSP +0.51% / 5日+2.39%；VIX +2.53% / 5日-5.81%；HYG +0.34% / 5日+0.80%；SMH +4.48% / 5日+10.25%；XLU -0.04% / 5日+3.16% |
 | **策略提示** | 市场环境允许正常观察买点；高分进攻股优先级更高。 |
 
-## 🟢 Buy samples (28)
+## 🟢 Buy samples (27)
 
 *Forward (close-to-close from D0, last tracked day): mean -6.80%, hit-rate 7% over 27 with data.*
 
@@ -47,18 +47,19 @@
 | 77 | **BHP** | 13 材料 / 电网 | 买入跟踪 + 预警买入 | 86.49 | -4.36% (D8) |
 | 77 | **OKLO** | 08 核能 | 买入跟踪 + 第一买入点 | 68.70 | -15.44% (D8) |
 
-## 🔴 Sell samples (8)
+## 🔴 Sell samples (7)
 
-| symbol | sector | rule | D0 close | fwd % (D) |
-|--------|--------|------|--------:|:--:|
-| **CCI** | 99 未分组 | 正式卖出 | 90.64 | +4.25% (D8) |
-| **CVX** | 14 能源 | 正式卖出 | 184.71 | +1.41% (D8) |
-| **EOG** | 14 能源 | 正式卖出 | 136.20 | +1.16% (D8) |
-| **MDB** | 11 AI软件 / SAAS | 正式卖出 | 307.35 | +14.12% (D8) |
-| **OXY** | 14 能源 | 正式卖出 | 57.46 | -0.92% (D8) |
-| **POET** | 05 AI网络 / 光模块 | 正式卖出 | 13.35 | -11.16% (D8) |
-| **XLE** | 14 能源 | 正式卖出 | 57.85 | -0.31% (D8) |
-| **NAN** |  |  | nan | — |
+*Forward (close-to-close from D0, last tracked day): mean +1.22%; price fell on 43% of 7 with data (for a sell, lower = correct).*
+
+| 卖出分 | symbol | sector | rule | D0 close | fwd % (D) |
+|:--:|--------|--------|------|--------:|:--:|
+| 97 | **CCI** | 99 未分组 | 正式卖出 | 90.64 | +4.25% (D8) |
+| 93 | **EOG** | 14 能源 | 正式卖出 | 136.20 | +1.16% (D8) |
+| 93 | **MDB** | 11 AI软件 / SAAS | 正式卖出 | 307.35 | +14.12% (D8) |
+| 93 | **OXY** | 14 能源 | 正式卖出 | 57.46 | -0.92% (D8) |
+| 93 | **XLE** | 14 能源 | 正式卖出 | 57.85 | -0.31% (D8) |
+| 89 | **CVX** | 14 能源 | 正式卖出 | 184.71 | +1.41% (D8) |
+| 89 | **POET** | 05 AI网络 / 光模块 | 正式卖出 | 13.35 | -11.16% (D8) |
 
 ---
-*观海买点分 = 0–100 buy score (higher = more attractive). fwd % = forward return from the D0 anchor close, no costs. Not investment advice.*
+*观海买点分 = 0–100 **buy** score · 卖出分 = 0–100 **sell**-conviction score (both: higher = stronger). fwd % = forward return from the D0 anchor close, no costs. Not investment advice.*

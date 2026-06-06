@@ -13,7 +13,7 @@
 | **指数快照** | SPX +0.22% / 5日+1.80%；QQQ +0.37% / 5日+3.33%；IWM -0.55% / 5日+2.81%；RSP +0.28% / 5日+2.01%；VIX -2.67% / 5日-8.26%；HYG +0.10% / 5日+0.51%；SMH -0.15% / 5日+5.47%；XLU -0.47% / 5日-1.29% |
 | **策略提示** | 市场环境允许正常观察买点；高分进攻股优先级更高。 |
 
-## 🟢 Buy samples (14)
+## 🟢 Buy samples (13)
 
 *Forward (close-to-close from D0, last tracked day): mean -4.74%, hit-rate 23% over 13 with data.*
 
@@ -33,20 +33,21 @@
 | 82 | **TER** | 19 COWOS | 预警买入 | 374.31 | -4.38% (D5) |
 | 81 | **KLAC** | 04 半导体设备 / EDA | 预警买入 | 1921.71 | +0.39% (D5) |
 
-## 🔴 Sell samples (10)
+## 🔴 Sell samples (9)
 
-| symbol | sector | rule | D0 close | fwd % (D) |
-|--------|--------|------|--------:|:--:|
-| **AEHR** | 19 COWOS | 正式卖出 | 92.33 | +6.63% (D5) |
-| **AMKR** | 19 COWOS | 正式卖出 | 69.56 | -6.63% (D5) |
-| **BE** | 09 储能 | 正式卖出 | 285.00 | -7.51% (D5) |
-| **CAMT** | 19 COWOS | 正式卖出 | 171.66 | -4.34% (D5) |
-| **COHR** | 05 AI网络 / 光模块 | 正式卖出 | 361.47 | +4.29% (D5) |
-| **FLNC** | 09 储能 | 正式卖出 | 18.88 | +21.35% (D5) |
-| **INTC** | 03 GPU / AI芯片 | 正式卖出 | 114.68 | -13.52% (D5) |
-| **NRG** | 07 数据中心电力 | 正式卖出 | 134.08 | -3.64% (D5) |
-| **TSEM** | 05 AI网络 / 光模块 | 正式卖出 | 255.23 | -7.74% (D5) |
-| **NAN** |  |  | nan | — |
+*Forward (close-to-close from D0, last tracked day): mean -1.23%; price fell on 67% of 9 with data (for a sell, lower = correct).*
+
+| 卖出分 | symbol | sector | rule | D0 close | fwd % (D) |
+|:--:|--------|--------|------|--------:|:--:|
+| 100 | **BE** | 09 储能 | 正式卖出 | 285.00 | -7.51% (D5) |
+| 100 | **INTC** | 03 GPU / AI芯片 | 正式卖出 | 114.68 | -13.52% (D5) |
+| 93 | **AEHR** | 19 COWOS | 正式卖出 | 92.33 | +6.63% (D5) |
+| 93 | **AMKR** | 19 COWOS | 正式卖出 | 69.56 | -6.63% (D5) |
+| 93 | **COHR** | 05 AI网络 / 光模块 | 正式卖出 | 361.47 | +4.29% (D5) |
+| 93 | **TSEM** | 05 AI网络 / 光模块 | 正式卖出 | 255.23 | -7.74% (D5) |
+| 89 | **CAMT** | 19 COWOS | 正式卖出 | 171.66 | -4.34% (D5) |
+| 86 | **FLNC** | 09 储能 | 正式卖出 | 18.88 | +21.35% (D5) |
+| 86 | **NRG** | 07 数据中心电力 | 正式卖出 | 134.08 | -3.64% (D5) |
 
 ---
-*观海买点分 = 0–100 buy score (higher = more attractive). fwd % = forward return from the D0 anchor close, no costs. Not investment advice.*
+*观海买点分 = 0–100 **buy** score · 卖出分 = 0–100 **sell**-conviction score (both: higher = stronger). fwd % = forward return from the D0 anchor close, no costs. Not investment advice.*
