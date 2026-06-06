@@ -1,2 +1,4 @@
 backend/dashboard_env.local
 .dashboard_cache/
+__pycache__/
+*.pyc

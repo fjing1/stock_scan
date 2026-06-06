@@ -745,7 +745,13 @@ class XunLongIndicator:
         d1_fj_low_context = (fj_daily <= 40) | (fj_daily.rolling(5, min_periods=1).min() <= 40)
         d1_fj_deep_low = fj_daily.rolling(5, min_periods=1).min() <= 10
         d1_fj_not_worse = (fj_daily >= fj_daily.shift(1)) | d1_fj_deep_low
-        d1_fj_weak = (fj_daily < fj_daily.shift(1)) | (fj_daily < fj_daily.shift(1)) & (fj_daily.shift(1) < fj_daily.shift(2))
+        # NOTE: the original expression was `(A) | (A) & (B)`, which by Python
+        # operator precedence is `A | (A & B)` and reduces to just `A` — the
+        # second clause was dead code. Keep the effective behavior ("FJ rolled
+        # over vs. the prior bar") but state it cleanly. For a stricter two-bar
+        # decline, use the commented form instead.
+        d1_fj_weak = fj_daily < fj_daily.shift(1)
+        # d1_fj_weak = (fj_daily < fj_daily.shift(1)) & (fj_daily.shift(1) < fj_daily.shift(2))
         d1_fj_high_recent = fj_daily.rolling(8, min_periods=1).max() >= 60
         d1_price_weak = (df["Close"] < df["Close"].shift(1)) | (df["Close"] < df.get("ema8", df["Close"]))
 

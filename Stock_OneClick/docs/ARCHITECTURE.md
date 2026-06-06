@@ -181,16 +181,17 @@ to produce closed "历史记录" rows and leaves unmatched ones in "观察列表
 ## 6. Known issues & tech debt
 
 A register of concrete problems found while reading the code. None are blockers;
-all are worth knowing before changing anything.
+all are worth knowing before changing anything. Items marked ✅ were addressed on
+2026-06-06 — see [IMPROVEMENTS.md](IMPROVEMENTS.md).
 
 | # | Issue | Evidence | Impact |
 |---|-------|----------|--------|
-| 1 | **`STOCK_ONECLICK_NO_OPEN` doesn't work for the main scanner.** It's honored only by the test runner (`stock_oneclick_test.py:339`); `scan_stocks.py:3073` opens its result unconditionally. The release notes show it with `scan_stocks.py`, which is misleading. | grep | A "headless" nightly run still pops a window. No env flag suppresses it in the engine. |
+| 1 | ✅ **Fixed.** `STOCK_ONECLICK_NO_OPEN` didn't work for the main scanner (only the test runner). `scan_stocks.main()` now honors it. | grep | Headless/cron runs no longer pop a window. |
 | 2 | **`_archive_completed_cycles` (scan_stocks.py:706) is dead code** — never called. Live archiving is inlined in `main()` (2965–2982). | grep (only the `def`) | Two divergent archive code paths; the unused one writes a different filename (see #3). |
 | 3 | **Triple naming mismatch for completed batches:** the directory is `completed_14d/`, the files written are `…共计20天数据.xlsx` (2970), and the dead helper would write `…共计14天数据.xlsx` (721). The tracking horizon is actually `TRACK_MAX_DAYS = 14`. | source | Confusing artifacts ("20天" files in a "14d" folder). Cosmetic but misleading. |
 | 4 | **Provider default is inconsistent across dashboards.** `web_dashboard.py` and `intraday_dashboard_app.py` `setdefault` Alpaca at import; `realtime_dashboard.py` launched via `run_dashboard.command` sets nothing → falls back to yfinance. The same `scan_universe` can thus use different vendors depending on entry point. | dashboard_data.py:41; web:21; intraday:17 | Surprising data-source drift between front-ends. |
 | 5 | **`dashboard_data_source.md` is stale.** It predates the Alpaca integration: documents a Polygon/yfinance default and a hard-coded `/Users/ben/Desktop/…` path. | doc vs code | Following it sets up the wrong provider. |
-| 6 | **Scoring logic is duplicated.** `realtime_dashboard.score_signal_row` (30–76) is a byte-for-byte copy of `scan.score_buy_signal_row` (1862–1908); the other two dashboards call the engine version. | source | Score changes must be made twice or they drift. |
+| 6 | ✅ **Fixed.** Scoring was duplicated — `realtime_dashboard.score_signal_row` was a byte-for-byte copy of `scan.score_buy_signal_row`. It now delegates to the engine version (all three dashboards now share one scorer). | source | Drift risk removed. |
 | 7 | **Engine ↔ GUI progress contract is a regex.** `run_scan_gui.py:286` matches the exact `[{i}/{total} | …]` / `[META …]` print formats; reformatting those `print`s silently breaks the progress bar (no error). | source | Brittle coupling. |
 | 8 | **Dead/unused data-provider methods:** `DashboardDataProvider.download_1m`/`download_5m` are never called; `STOCK_DASHBOARD_CACHE_DIR` is created but never read/written (cache is memory-only). | source | Misleading surface area. |
 | 9 | **Two divergent watchlist merge semantics.** "导入TV清单" (file import) is purely additive; "同步TV链接" (URL sync) is replace-and-merge and can *remove* symbols dropped from the watchlist. They also seed different default `group` labels (`98 TradingView导入` vs `00 市场环境`). | watchlist_importer.py | A URL sync can silently shrink the universe. |

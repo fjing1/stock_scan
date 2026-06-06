@@ -31,6 +31,7 @@ yfinance / Polygon / Alpaca, for watching buy points form during the session.
 | **[SIGNAL_LOGIC.md](SIGNAL_LOGIC.md)** | The analytical core: every sub-indicator inside `XunLongIndicator` (L2 swing, 分金/FJ, volume oscillator, RSI, A/C/C_rev, the Gann Box engine), the six production signal types and how they map to indicator columns, the 观海买点分 scoring formula, the 14-day lifecycle tracker, and the market-context risk model. |
 | **[COMPONENTS.md](COMPONENTS.md)** | The non-engine programs: the three dashboards + shared data-provider layer, the Tkinter scan GUI, the TradingView watchlist importer, and the two standalone tools (`dual_mode_scan_v1.py`, `stock_list_10B.py`). |
 | **[DATA_AND_OUTPUTS.md](DATA_AND_OUTPUTS.md)** | File layout, the input-workbook schema, the output workbook's 6 fixed sheets + per-date sheets, all TradingView `.txt` exports, the `_latest` / timestamp / date naming conventions, and the full environment-variable + configuration reference. |
+| **[IMPROVEMENTS.md](IMPROVEMENTS.md)** | Changelog of the 2026-06-06 reliability / performance / architecture changes, the new test suite + backtest tool, and the (deferred) monolith-split plan. |
 
 The original author docs are kept alongside the code:
 `../RELEASE_2026_06_V1.md` (release notes) and
@@ -59,6 +60,10 @@ python3 run_scan_gui.py
 python3 web_dashboard.py            # browser app at http://127.0.0.1:8765
 python3 realtime_dashboard.py       # full-market Tkinter table
 python3 intraday_dashboard_app.py   # single-symbol + sector-stats Tkinter app
+
+# 5. Dev tools (use a venv with pandas/numpy/openpyxl, e.g. the repo's vcp_env):
+../../vcp_env/bin/python tests/test_engine.py            # indicator + scoring tests
+../../vcp_env/bin/python backtest_score.py --source both # 观海买点分 vs. forward-return calibration
 ```
 
 Useful environment toggles (see [DATA_AND_OUTPUTS.md](DATA_AND_OUTPUTS.md) for the full table):
@@ -71,9 +76,9 @@ STOCK_ONECLICK_RESCAN_FROM=2026-05-22 python3 scan_stocks.py
 export STOCK_DASHBOARD_DATA_PROVIDER=alpaca   # yfinance | polygon | alpaca
 ```
 
-> ⚠️ `STOCK_ONECLICK_NO_OPEN=1` only suppresses the auto-open in the **test
-> runner** (`stock_oneclick_test.py`); `scan_stocks.py` opens its result
-> unconditionally. See [ARCHITECTURE.md](ARCHITECTURE.md#known-issues--tech-debt).
+> `STOCK_ONECLICK_NO_OPEN=1` suppresses the macOS auto-open. As of 2026-06-06 it
+> is honored by **both** `scan_stocks.py` and the test runner (it was previously
+> test-runner only). See [IMPROVEMENTS.md](IMPROVEMENTS.md).
 
 ---
 

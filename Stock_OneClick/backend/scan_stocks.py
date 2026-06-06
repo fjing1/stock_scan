@@ -2315,67 +2315,121 @@ def export_full_scan_pool(df_run: pd.DataFrame, run_dt: datetime, base_dir: Path
     return current_path, snapshot_path, prev_backup_path
 
 
-def enrich_meta_with_yfinance(df_input, df_meta):
+def _fetch_yf_info(sym):
+    """Fetch one symbol's yfinance .info, tolerant of failures. Returns (sym, dict)."""
+    try:
+        info = yf.Ticker(sym).info or {}
+    except Exception:
+        info = {}
+    return sym, {
+        "name": info.get("shortName") or info.get("longName") or "",
+        "exchange": info.get("exchange", "") or "",
+        "sector": info.get("sector", "") or "",
+        "industry": info.get("industry", "") or "",
+        "market_cap": info.get("marketCap", np.nan),
+    }
+
+
+def enrich_meta_with_yfinance(df_input, df_meta, force=None, max_workers=None):
     """
     用 yfinance 更新 Sheet2_Classified:
     - 新 symbol：加一行
     - 老 symbol：更新 name / market_cap / 行业等（不覆盖 group/note/enable）
+
+    性能 / 稳定性优化：
+    - 默认只联网拉取“新增”或“关键字段(name/exchange)缺失”的标的，避免每次运行都对
+      全量 universe 调用极易被限流的 yfinance .info（这是之前最大的限流/拖慢来源）。
+    - 设置 STOCK_ONECLICK_REFRESH_META=1 可强制刷新全部标的。
+    - 需要拉取的标的用线程池并发获取（STOCK_ONECLICK_META_WORKERS，默认 8）。
     """
     meta_cols = [
         "symbol", "name", "exchange", "sector",
         "industry", "market_cap", "group", "note", "enable"
     ]
-    if df_meta.empty:
+    if df_meta is None or df_meta.empty:
         df_meta = pd.DataFrame(columns=meta_cols)
+    else:
+        df_meta = df_meta.copy()
 
-    new_rows = []
+    if force is None:
+        force = os.environ.get("STOCK_ONECLICK_REFRESH_META", "").strip() == "1"
+    if max_workers is None:
+        try:
+            max_workers = int(os.environ.get("STOCK_ONECLICK_META_WORKERS", "8"))
+        except ValueError:
+            max_workers = 8
 
     symbols = df_input["symbol"].dropna().astype(str).str.strip().str.upper().unique().tolist()
-    total = len(symbols)
-    print(f"元数据更新：共 {total} 只（可能较慢，请等待）", flush=True)
 
-    for i, sym in enumerate(symbols, start=1):
-        print(f"[META {i}/{total}] 更新 {sym}", flush=True)
-        row_meta = df_meta[df_meta["symbol"] == sym]
-        # 拉基本信息
-        try:
-            tk = yf.Ticker(sym)
-            info = tk.info
-        except Exception:
-            info = {}
+    existing = {}
+    if not df_meta.empty and "symbol" in df_meta.columns:
+        for idx, r in df_meta.iterrows():
+            existing[str(r["symbol"]).strip().upper()] = idx
 
-        name = info.get("shortName") or info.get("longName") or ""
-        exchange = info.get("exchange", "")
-        sector = info.get("sector", "")
-        industry = info.get("industry", "")
-        market_cap = info.get("marketCap", np.nan)
+    def _needs_fetch(sym):
+        if force or sym not in existing:
+            return True
+        row = df_meta.loc[existing[sym]]
+        name_ok = bool(str(row.get("name", "") or "").strip())
+        exch_ok = bool(str(row.get("exchange", "") or "").strip())
+        return not (name_ok and exch_ok)
 
-        if row_meta.empty:
-            # 新股票：新增一行
+    to_fetch = [s for s in symbols if _needs_fetch(s)]
+    skipped = len(symbols) - len(to_fetch)
+    print(
+        f"元数据更新：共 {len(symbols)} 只，需联网 {len(to_fetch)} 只"
+        f"（跳过已缓存 {skipped} 只{'，强制刷新' if force else ''}）",
+        flush=True,
+    )
+
+    fetched = {}
+    if to_fetch:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        workers = max(1, min(max_workers, len(to_fetch)))
+        done = 0
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futures = [ex.submit(_fetch_yf_info, s) for s in to_fetch]
+            for fut in as_completed(futures):
+                done += 1
+                try:
+                    sym, info = fut.result()
+                except Exception:
+                    continue
+                fetched[sym] = info
+                if done % 25 == 0 or done == len(to_fetch):
+                    print(f"[META {done}/{len(to_fetch)}]", flush=True)
+
+    new_rows = []
+    for sym in symbols:
+        info = fetched.get(sym)
+        if sym not in existing:
+            info = info or {}
+            sector = info.get("sector", "")
             new_rows.append({
                 "symbol": sym,
-                "name": name,
-                "exchange": exchange,
+                "name": info.get("name", ""),
+                "exchange": info.get("exchange", ""),
                 "sector": sector,
-                "industry": industry,
-                "market_cap": market_cap,
+                "industry": info.get("industry", ""),
+                "market_cap": info.get("market_cap", np.nan),
                 "group": sector,   # 默认 group=sector，后面你可以手改
                 "note": "",
                 "enable": 1,
             })
-        else:
+        elif info is not None:
             # 老股票：只更新基础信息，不动 group/note/enable
-            idx = row_meta.index[0]
-            if name:
-                df_meta.loc[idx, "name"] = name
-            if exchange:
-                df_meta.loc[idx, "exchange"] = exchange
-            if sector:
-                df_meta.loc[idx, "sector"] = sector
-            if industry:
-                df_meta.loc[idx, "industry"] = industry
-            if not np.isnan(market_cap):
-                df_meta.loc[idx, "market_cap"] = market_cap
+            idx = existing[sym]
+            if info.get("name"):
+                df_meta.loc[idx, "name"] = info["name"]
+            if info.get("exchange"):
+                df_meta.loc[idx, "exchange"] = info["exchange"]
+            if info.get("sector"):
+                df_meta.loc[idx, "sector"] = info["sector"]
+            if info.get("industry"):
+                df_meta.loc[idx, "industry"] = info["industry"]
+            mc = info.get("market_cap", np.nan)
+            if mc is not None and not (isinstance(mc, float) and np.isnan(mc)):
+                df_meta.loc[idx, "market_cap"] = mc
 
     if new_rows:
         df_meta = pd.concat([df_meta, pd.DataFrame(new_rows)], ignore_index=True)
@@ -2384,12 +2438,27 @@ def enrich_meta_with_yfinance(df_input, df_meta):
         if col not in df_meta.columns:
             df_meta[col] = np.nan
 
-    df_meta["enable"] = df_meta["enable"].fillna(1).astype(int)
+    df_meta["enable"] = pd.to_numeric(df_meta["enable"], errors="coerce").fillna(1).astype(int)
 
     return df_meta[meta_cols]
 
 
-def download_daily(symbol, period="1y"):
+# ---- In-run bar cache + parallel prefetch -------------------------------------
+# Keyed by (kind, yf_symbol, period). Used only by the nightly/CLI path: the
+# dashboards replace download_daily / download_4h wholesale (monkey-patch), so
+# they bypass this and keep their own provider-level cache. The cache removes the
+# repeated fetches the scan + follow-up + market-context passes would otherwise
+# do for the same symbol within a single run.
+_BAR_CACHE: dict = {}
+_BAR_CACHE_ENABLED = True
+
+
+def clear_bar_cache():
+    """Drop the in-run bar cache (call between independent runs in one process)."""
+    _BAR_CACHE.clear()
+
+
+def _fetch_daily_raw(symbol, period="1y"):
     yf_symbol = to_yfinance_symbol(symbol)
     df = yf.download(yf_symbol, period=period, interval="1d", auto_adjust=False, progress=False)
     df = normalize_yf_df(df)
@@ -2398,13 +2467,72 @@ def download_daily(symbol, period="1y"):
     return df[["Open", "High", "Low", "Close", "Volume"]].dropna()
 
 
-def download_4h(symbol, period="90d"):
+def _fetch_4h_raw(symbol, period="90d"):
     yf_symbol = to_yfinance_symbol(symbol)
     df = yf.download(yf_symbol, period=period, interval="4h", auto_adjust=False, progress=False)
     df = normalize_yf_df(df)
     if df.empty:
         return None
     return df[["Open", "High", "Low", "Close", "Volume"]].dropna()
+
+
+def _cached_bar(kind, symbol, period, fetcher):
+    if not _BAR_CACHE_ENABLED:
+        return fetcher(symbol, period)
+    key = (kind, to_yfinance_symbol(symbol), period)
+    if key not in _BAR_CACHE:
+        _BAR_CACHE[key] = fetcher(symbol, period)
+    cached = _BAR_CACHE[key]
+    # Return a copy so downstream mutation can't poison the shared cache entry.
+    return cached.copy() if cached is not None else None
+
+
+def download_daily(symbol, period="1y"):
+    return _cached_bar("daily", symbol, period, _fetch_daily_raw)
+
+
+def download_4h(symbol, period="90d"):
+    return _cached_bar("4h", symbol, period, _fetch_4h_raw)
+
+
+def prefetch_bars(symbols, daily_period="1y", h4_period="90d", max_workers=None):
+    """Warm the in-run bar cache in parallel so the serial scan / follow-up
+    passes hit memory instead of the network. Best-effort: a failed fetch is
+    cached as None and handled by the normal per-symbol skip logic.
+
+    Concurrency override: STOCK_ONECLICK_DOWNLOAD_WORKERS (default 8)."""
+    if not _BAR_CACHE_ENABLED:
+        return
+    syms = [str(s).strip().upper() for s in dict.fromkeys(symbols) if str(s).strip()]
+    if not syms:
+        return
+    if max_workers is None:
+        try:
+            max_workers = int(os.environ.get("STOCK_ONECLICK_DOWNLOAD_WORKERS", "8"))
+        except ValueError:
+            max_workers = 8
+    max_workers = max(1, min(max_workers, len(syms)))
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def _warm(sym):
+        # Distinct symbols → distinct cache keys, so threads never collide on a key.
+        download_daily(sym, period=daily_period)
+        download_4h(sym, period=h4_period)
+        return sym
+
+    print(f"并行预取行情：{len(syms)} 只 ×（日线+4H），并发 {max_workers} …", flush=True)
+    done = 0
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = {ex.submit(_warm, s): s for s in syms}
+        for fut in as_completed(futures):
+            done += 1
+            if done % 25 == 0 or done == len(syms):
+                print(f"  预取进度 {done}/{len(syms)}", flush=True)
+            try:
+                fut.result()
+            except Exception:
+                pass
 
 
 # ================= 买点规则 =================
@@ -2595,13 +2723,19 @@ def add_low_start_buy_points(df):
 
 # ================= 扫描一个股票 =================
 
-def scan_one_symbol(sym, name, xl: XunLongIndicator):
-    df_d = download_daily(sym, period="1y")
+def scan_one_symbol(sym, name, xl: XunLongIndicator, *, daily_fetcher=None, h4_fetcher=None):
+    # Data access is injectable: dashboards / tests / alternate providers can
+    # pass their own fetchers. Defaults resolve to the module-level downloaders
+    # at call time, so existing monkey-patching of scan.download_daily /
+    # scan.download_4h keeps working unchanged.
+    _dl = daily_fetcher or download_daily
+    _h4 = h4_fetcher or download_4h
+    df_d = _dl(sym, period="1y")
     if df_d is None or len(df_d) < 150:
         print(f"[{sym}] 日线数据太短/获取失败，跳过")
         return pd.DataFrame()
 
-    df_4h = download_4h(sym, period="90d")
+    df_4h = _h4(sym, period="90d")
 
     # 寻龙诀全套
     df_xl = xl.compute(df_d, df_4h)
@@ -2799,9 +2933,17 @@ def main():
         .to_dict()
     )
 
+    # 并行预取行情，热身 in-run 缓存，避免“扫描 + 追踪”两遍串行下载
+    # （之前最大的串行网络开销）。失败的标的会缓存为 None，由后续按需逻辑处理。
+    try:
+        prefetch_bars(df_run["symbol"].tolist(), daily_period="1y", h4_period="90d")
+    except Exception as exc:
+        print(f"⚠️ 行情预取阶段出错（忽略，回退为按需下载）：{exc}", flush=True)
+
     xl = XunLongIndicator()
 
     all_rows = []
+    scan_errors = []
     total = len(df_run)
     print(f"本次扫描标的数：{total}")
     for i, (_, r) in enumerate(df_run.iterrows(), start=1):
@@ -2814,10 +2956,22 @@ def main():
         except Exception as e:
             print(f"[{sym}] 扫描出错：{e}")
             traceback.print_exc()   # ← 多打印完整调用栈
+            scan_errors.append((sym, str(e)))
             continue
 
         if not df_sig.empty:
             all_rows.append(df_sig)
+
+    if scan_errors:
+        print(
+            f"⚠️ 本次有 {len(scan_errors)} 只标的扫描失败（数据缺失或异常），"
+            f"不应与“无信号”混为一谈：",
+            flush=True,
+        )
+        for esym, emsg in scan_errors[:20]:
+            print(f"   - {esym}: {emsg}", flush=True)
+        if len(scan_errors) > 20:
+            print(f"   …以及另外 {len(scan_errors) - 20} 只", flush=True)
 
     forced_dates = _get_forced_rescan_signal_dates(run_dt)
 
@@ -3068,11 +3222,14 @@ def main():
     print(f"✅ TV买入纯导入：{tv_buy_path}")
     print(f"✅ TV买入备注版：{tv_buy_notes_path}")
 
-    # 自动打开结果（Mac）
-    try:
-        subprocess.run(["open", str(latest_path)])
-    except Exception as e:
-        print("自动打开结果失败，但文件已保存：", e)
+    # 自动打开结果（Mac）。设置 STOCK_ONECLICK_NO_OPEN=1 可跳过（无人值守 / CI）。
+    if os.environ.get("STOCK_ONECLICK_NO_OPEN", "").strip() == "1":
+        print("STOCK_ONECLICK_NO_OPEN=1：跳过自动打开结果。")
+    else:
+        try:
+            subprocess.run(["open", str(latest_path)])
+        except Exception as e:
+            print("自动打开结果失败，但文件已保存：", e)
 
 
 if __name__ == "__main__":

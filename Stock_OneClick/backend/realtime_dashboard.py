@@ -28,52 +28,10 @@ INPUT_FILE = BASE_DIR / "stock_input_template.xlsx"
 
 
 def score_signal_row(row: pd.Series) -> float:
-    if str(row.get("signal_side", "")).upper() != "BUY":
-        return np.nan
-    score = 50.0
-    signal_type = str(row.get("signal_type", ""))
-    model = str(row.get("model", ""))
-    if signal_type == "正式买入":
-        score += 20
-    elif signal_type == "预警买入":
-        score += 14
-    elif signal_type == "二进宫买入点":
-        score += 16
-    elif signal_type == "第一买入点":
-        score += 10
-    if "BUY_A" in model or "0出" in model:
-        score += 8
-
-    rank120 = pd.to_numeric(row.get("rank120", np.nan), errors="coerce")
-    if pd.notna(rank120):
-        if rank120 <= 0.25:
-            score += 10
-        elif rank120 <= 0.45:
-            score += 7
-        elif rank120 <= 0.65:
-            score += 3
-        elif rank120 >= 0.85:
-            score -= 5
-
-    rsi = pd.to_numeric(row.get("RSI", np.nan), errors="coerce")
-    if pd.notna(rsi):
-        if 42 <= rsi <= 65:
-            score += 7
-        elif 35 <= rsi < 42:
-            score += 3
-        elif rsi > 75:
-            score -= 6
-
-    l2 = pd.to_numeric(row.get("L2_trend", np.nan), errors="coerce")
-    if pd.notna(l2) and l2 <= 35:
-        score += 5
-    h4_fj = pd.to_numeric(row.get("H4_FJ", np.nan), errors="coerce")
-    if pd.notna(h4_fj) and h4_fj <= 55:
-        score += 4
-    h4_rsi = pd.to_numeric(row.get("H4_RSI", np.nan), errors="coerce")
-    if pd.notna(h4_rsi) and h4_rsi >= 45:
-        score += 3
-    return round(max(0.0, min(100.0, score)), 1)
+    # Delegates to the engine's canonical scorer. This used to be a
+    # byte-for-byte copy of scan.score_buy_signal_row; keeping one source of
+    # truth avoids the two drifting apart when the scoring weights change.
+    return scan.score_buy_signal_row(row)
 
 
 def load_universe(limit: int = 0) -> pd.DataFrame:

@@ -168,7 +168,10 @@ Indicator parameters are constructor args of `XunLongIndicator`
 | Variable | Read by | Default | Effect |
 |----------|---------|---------|--------|
 | `STOCK_ONECLICK_RESCAN_FROM` | `scan_stocks.py:501` | — | `YYYY-MM-DD`: force-rebuild signal history from this date (clamped to `LIFECYCLE_START_DATE`) to the run date, instead of the normal catch-up. |
-| `STOCK_ONECLICK_NO_OPEN` | **only `stock_oneclick_test.py:339`** | — | `=1` suppresses auto-open in the **test runner**. ⚠️ **No effect on `scan_stocks.py`**, which opens unconditionally — despite the release notes showing it with `scan_stocks.py`. |
+| `STOCK_ONECLICK_NO_OPEN` | `scan_stocks.py` `main()` + `stock_oneclick_test.py:339` | — | `=1` suppresses the macOS auto-open. As of 2026-06-06 honored by **both** the scanner and the test runner (previously test-runner only). See [IMPROVEMENTS.md](IMPROVEMENTS.md). |
+| `STOCK_ONECLICK_REFRESH_META` | `scan_stocks.py` `enrich_meta_with_yfinance` | — | `=1` forces a full yfinance metadata refresh. Default: only new/incomplete symbols are fetched (avoids re-hitting the whole universe every run). |
+| `STOCK_ONECLICK_META_WORKERS` | `scan_stocks.py` `enrich_meta_with_yfinance` | `8` | Thread-pool size for parallel metadata fetches. |
+| `STOCK_ONECLICK_DOWNLOAD_WORKERS` | `scan_stocks.py` `prefetch_bars` | `8` | Thread-pool size for the parallel pre-scan bar prefetch. |
 | `STOCK_DASHBOARD_DATA_PROVIDER` | dashboards | `yfinance` (lib) / `alpaca` (web & intraday force) | `yfinance` \| `polygon` \| `alpaca`. |
 | `STOCK_DASHBOARD_REFRESH_SECONDS` | dashboards | `300` | Auto-refresh interval / web cache TTL. |
 | `STOCK_DASHBOARD_LIMIT` | web, realtime | `0` (all) | Cap tickers scanned (not honored by the intraday app). |
