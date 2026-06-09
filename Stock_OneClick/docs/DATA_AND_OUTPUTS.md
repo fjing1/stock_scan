@@ -83,7 +83,7 @@ first):
 | # | Sheet | Contents |
 |---|-------|----------|
 | 1 | `Summary` | Two stacked sections (买入跟踪 / 卖出跟踪, 14-day) + a 板块 Top-5 block; Top-5 sector rows highlighted. |
-| 2 | `RawSignals` | Flat per-signal table — the most data-dense sheet. Columns: `run_date, run_time, symbol, name, 板块, signal_date, signal_type, signal_side, model, close, volume, vol_ma20, L2_trend, L2_pump, RSI, rank120, H4_RSI, H4_FJ, H4_0_birth, H4_1_birth, Gann_1_date, Gann_1_price, buy_score, extra_info`. |
+| 2 | `RawSignals` | Flat per-signal table — the most data-dense sheet. Columns: `run_date, run_time, symbol, name, 板块, signal_date, signal_type, signal_side, model, close, volume, vol_ma20, L2_trend, L2_pump, RSI, rank120, H4_RSI, H4_FJ, H4_0_birth, H4_1_birth, Gann_1_date, Gann_1_price, buy_score, sell_score, extra_info` (`sell_score` added 2026-06). |
 | 3–4 | `买入观察列表` / `买入历史记录` | Open / closed BUY lifecycle ([SIGNAL_LOGIC §8.2](SIGNAL_LOGIC.md#82-lifecycle-tables-_build_lifecycle_tables-scan_stockspy1414)). |
 | 5–6 | `卖出观察列表` / `卖出历史记录` | Open / closed SELL lifecycle. |
 | 7+ | `YYYY-MM-DD` (one per signal date) | A market-context banner + buy/sell follow-up tracking (or a snapshot for dates without follow-up data). |

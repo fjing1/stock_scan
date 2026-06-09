@@ -83,3 +83,46 @@ $ ../../vcp_env/bin/python backtest_score.py --source both   # runs; 221 obs
 Not done here (needs a live run): an end-to-end nightly scan, which requires
 network + the input workbook + macOS. The changes preserve the existing output
 schema, so `scan_result_latest.xlsx` and all exports are unaffected in shape.
+
+---
+
+## Update — sell-conviction score (卖出分) + dated reports
+
+- **`score_sell_signal_row` (scan_stocks.py)** — answers "why do buys have a
+  score but sells don't?": the original scorer returned `NaN` for SELL rows. Added
+  a symmetric 0–100 sell score (formal vs. warning sell, `1出` confirmation, high
+  rank120 = room to fall, overbought-rolling-over RSI, topping L2/4H). Written to
+  a new `RawSignals.sell_score` column (future runs) and unit-tested. See
+  [SIGNAL_LOGIC.md §7.1](SIGNAL_LOGIC.md#71-卖出分--the-sell-conviction-score-score_sell_signal_row-added-2026-06).
+- **`backend/make_report.py`** — generates the dated reports in
+  [`../reports/`](../reports/). Now attaches 观海买点分 to buys and 卖出分 to
+  sells (computed from RawSignals across recent runs via the engine's scorers),
+  drops the row cap (full lists, sorted by score), and adds a "Top sell" column to
+  the index. A trailing-`NaN` parse bug that inflated each block's count by one
+  was fixed.
+- Tests: **17 passing** (added 3 sell-score cases).
+
+---
+
+## Strategy analysis & tooling (regime-gate + score calibration)
+
+Driven by the question "how to best make profit with this system," a 15-agent analysis
+workflow measured the real edge in the signal data and an adversarial review (no
+look-ahead leaks, statistically sound) checked the tools. **Headline finding: there is
+no proven security-selection edge — the buy score's IC is ≈ 0, and the only
+outcome-correlated component (the regime model) is collinear with one bull→crash
+episode.** The actionable conclusion is to run the scanner as a **risk/exposure gate**,
+recalibrate the score, and forward-validate on paper before risking capital. Full
+write-up: [STRATEGY_PROPOSAL.md](STRATEGY_PROPOSAL.md).
+
+New tools (all read-only, no network; verified on the real data; covered by
+`tests/test_strategy_tools.py`, 12 passing):
+
+| Tool | Purpose |
+|------|---------|
+| `backend/build_dataset.py` | Builds `reports/strategy_dataset.csv` — one row per (symbol, date, side) with regime state, sector, signal type, score, scorer sub-features (joined from RawSignals), and forward returns (D1…D14). Source of truth for the analysis. |
+| `backend/score_calibration.py` | IC (Pearson + Spearman), day-demeaned IC, per-date IC distribution, winsorized score buckets, and **sub-feature univariate IC** + a BUY/SELL go/no-go verdict. Confirms 观海买点分 IC ≈ 0 (NOT usable for sizing); 卖出分 Spearman −0.24 (directionally right, unproven). |
+| `backend/gate_calc.py` | Maps each date → target long gross from the market-context state + `SELL_share` breadth; writes `reports/gate_log.csv`. Action text names the driver (state vs breadth) so a blank-state, breadth-driven de-risk is never mistaken for a regime call. |
+| `backend/benchmark_ma.py` | The "dumb" N-day MA de-risk rule the gate must beat in forward testing. Loudly flags the reconstructed-SPX fallback as a DEMO; supply `--prices` a real series for an actual test. |
+
+Total tests across the project: **29 passing** (`test_engine.py` 14 + skip, `test_strategy_tools.py` 12, plus the indicator/scoring cases).
