@@ -2513,19 +2513,31 @@ def clear_bar_cache():
 
 def _fetch_daily_raw(symbol, period="1y"):
     yf_symbol = to_yfinance_symbol(symbol)
-    df = yf.download(yf_symbol, period=period, interval="1d", auto_adjust=False, progress=False)
+    # 用 Ticker().history() 而不是 yf.download()：download() 会写入 yfinance 的模块级
+    # 全局状态 (shared._DFS)，多线程并发时不安全——并行预取下会把不同标的的列串台
+    # （NUE 的请求曾返回 CEG/SMR 的数据，且根本不含 NUE），导致重复列 / 拿到错误标的。
+    # Ticker().history() 是按实例的，线程安全，返回单层列、单只标的的数据。
+    df = yf.Ticker(yf_symbol).history(period=period, interval="1d", auto_adjust=False)
     df = normalize_yf_df(df)
     if df.empty:
         return None
+    # history() 的日线索引带时区(America/New_York)，download() 是无时区日期。
+    # 去掉时区以保持与历史报告一致的日期语义（signal_date / 生命周期日期比较）。
+    if getattr(df.index, "tz", None) is not None:
+        df.index = df.index.tz_localize(None)
     return df[["Open", "High", "Low", "Close", "Volume"]].dropna()
 
 
 def _fetch_4h_raw(symbol, period="90d"):
     yf_symbol = to_yfinance_symbol(symbol)
-    df = yf.download(yf_symbol, period=period, interval="4h", auto_adjust=False, progress=False)
+    # 同上：避免 yf.download() 的多线程串台问题，改用线程安全的 Ticker().history()。
+    df = yf.Ticker(yf_symbol).history(period=period, interval="4h", auto_adjust=False)
     df = normalize_yf_df(df)
     if df.empty:
         return None
+    # 旧的 download() 4H 索引是 UTC，这里把 history() 的 ET 索引转成 UTC 保持一致。
+    if getattr(df.index, "tz", None) is not None:
+        df.index = df.index.tz_convert("UTC")
     return df[["Open", "High", "Low", "Close", "Volume"]].dropna()
 
 

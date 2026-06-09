@@ -2,10 +2,11 @@
 
 Dated Markdown reports generated from `scan_result_latest.xlsx` by `backend/make_report.py`. One file per signal date, newest first. Filenames are ISO-dated so they sort chronologically.
 
-*Latest scan run: 2026-06-05 14:35:36 · 11 dated reports.*
+*Latest scan run: 2026-06-08 18:59:15 · 12 dated reports.*
 
 | Date | Market state | Buys | Sells | Top buy | Top sell | Report |
 |------|--------------|:----:|:-----:|---------|----------|--------|
+| 2026-06-08 | 看跌/避险 | 25 | 3 | HOOD (99) | PANW (100) | [report](scan_report_2026-06-08.md) |
 | 2026-06-05 | 看跌/避险 | 4 | 56 | XLU (95) | SMCI (100) | [report](scan_report_2026-06-05.md) |
 | 2026-06-04 | 谨慎看涨 | 28 | 7 | LEU (100) | IREN (100) | [report](scan_report_2026-06-04.md) |
 | 2026-06-03 | 风险升高 | 21 | 14 | META (99) | CRDO (100) | [report](scan_report_2026-06-03.md) |
