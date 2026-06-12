@@ -58,6 +58,7 @@ against the trading literature.
 | 12 | Cross-sectional market-neutral ensemble? | `market_neutral_ensemble.py` | ✅ **real alpha** (beta≈0, OOS-persistent) — but turnover/survivorship-limited |
 | 13 | Cut ensemble turnover for net edge? | `mn_turnover.py` | ✅ **rebalance buffer** halves turnover, ~2× train net Sharpe; smoothing/low-freq hurt |
 | 14 | Stack more alphas + sector-neutralize? | `alpha_stack.py` | ❌ naive stacking **hurts** (negative/decayed anomalies); balanced 4-alpha stays best |
+| 15 | Analyst-revision momentum (free, non-price)? | `revision_alpha.py` | ❌ orthogonal (corr≈0) but **negative** OOS — ratings lag price; adding it hurt |
 
 ### Key results
 
@@ -164,6 +165,17 @@ needs individually-positive, non-decayed components; with OHLCV alone the easy
 cross-sectional alphas are exhausted — further lift needs new orthogonal data
 (fundamentals / revisions / alt-data) and a survivorship-free universe.
 
+**Analyst-revision momentum — orthogonal but negative (15).** The one free, reachable,
+backtestable NON-price signal: trailing net analyst up/down-grades from yfinance
+`.upgrades_downgrades` (history to 2012, 125 names). It IS orthogonal (corr ≈0 to the
+price alphas, β≈0) — the diversifier we wanted — but standalone Sharpe is NEGATIVE
+(−0.44 train / −0.68 test): broker rating changes LAG price, so buying upgrades loses.
+Adding it dragged the ensemble (test 0.48→0.42). The inverse (+0.44/+0.68) is likely
+survivorship-contaminated (downgraded survivors recovered). Note yfinance gives rating
+CHANGES, not the stronger EPS-estimate revisions. This settles the frontier: the free
+orthogonal option is exhausted — real further alpha needs EPS-estimate revisions,
+point-in-time fundamentals, and a survivorship-free universe (not available via Yahoo).
+
 ## 5. The resulting system
 
 ```
@@ -194,6 +206,7 @@ HOLD   : ~1–3 weeks
 - `market_neutral_ensemble.py` — cross-sectional long-short alpha ensemble
 - `mn_turnover.py` — turnover-reduction pass (buffer/smoothing/frequency)
 - `alpha_stack.py` — multi-alpha stacking + sector-neutralization (8 alphas)
+- `revision_alpha.py` — analyst-revision-momentum (non-price) alpha test
 - `exit_search.py` — exit-rule search (found %K≥70; stops hurt)
 - `exit_strategies_lit.py` — literature exits (BBmid/RSI2 upgrade)
 - `rank_test.py` — which feature ranks signals (12m RS)
