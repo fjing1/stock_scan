@@ -56,6 +56,7 @@ against the trading literature.
 | 10 | Broaden: which entry indicators have edge? | `entry_sweep.py` | ✅ oversold+>MA200 best; momentum needs a trend-exit |
 | 11 | Momentum entries × trend-following exits? | `momentum_exit_sweep.py` | ⚠️ high absolute PF but it's **beta, not alpha** (detrended <50%) |
 | 12 | Cross-sectional market-neutral ensemble? | `market_neutral_ensemble.py` | ✅ **real alpha** (beta≈0, OOS-persistent) — but turnover/survivorship-limited |
+| 13 | Cut ensemble turnover for net edge? | `mn_turnover.py` | ✅ **rebalance buffer** halves turnover, ~2× train net Sharpe; smoothing/low-freq hurt |
 
 ### Key results
 
@@ -139,6 +140,15 @@ consistency. Improvements (Citadel playbook): slower signals / rebalance thresho
 to cut turnover, more uncorrelated alphas to lift Sharpe, sector/size neutralization,
 and a point-in-time universe to remove survivorship.
 
+**Turnover reduction — the buffer is the deployable win (13).** Of the standard
+fixes, a **rebalance buffer/hysteresis** (enter in the top/bottom 20%, only drop a
+name when it leaves the 40% band) cut turnover 118%→66% and nearly doubled the weak-
+period net Sharpe (train 0.26→0.46, test 0.58→0.53), beta still ≈0 — it removes churn,
+not signal (gross Sharpe even rose). Score smoothing and lower rebalance frequency
+both HURT: they wash out the fast short-term-reversal alpha and (monthly) let beta
+creep to 0.14–0.20. Net Sharpe ~0.5 is still modest — the next lever is stacking more
+uncorrelated alphas, not more turnover tuning.
+
 ## 5. The resulting system
 
 ```
@@ -167,6 +177,7 @@ HOLD   : ~1–3 weeks
 - `entry_sweep.py` — broad entry-indicator library (32 variants, OOS)
 - `momentum_exit_sweep.py` — momentum entries × trend-following exits (beta check)
 - `market_neutral_ensemble.py` — cross-sectional long-short alpha ensemble
+- `mn_turnover.py` — turnover-reduction pass (buffer/smoothing/frequency)
 - `exit_search.py` — exit-rule search (found %K≥70; stops hurt)
 - `exit_strategies_lit.py` — literature exits (BBmid/RSI2 upgrade)
 - `rank_test.py` — which feature ranks signals (12m RS)
