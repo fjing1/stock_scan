@@ -1,0 +1,41 @@
+//@version=3
+
+study(title="Cycle and Stoch", shorttitle="s", overlay=false)
+// ------------------------------- Inputs ------------------------------- //
+src = input(close, title="Source")
+length=10
+useCurrentRes = input(true, title="Use Current Chart Resolution?")
+resCustom = input("240", title="Use Different Timeframe? Uncheck Box Above")
+
+res = useCurrentRes ? period : resCustom
+
+
+PDS = 10
+l_pre = 8
+PreC = stoch(close, high, low, PDS)
+xPreCalc = ema(PreC, 3)
+xDSS = stoch(xPreCalc, xPreCalc, xPreCalc, PDS)
+//xDSS_h = wma(2*wma(xDSS, l_pre/2)-wma(xDSS,l_pre), floor(sqrt(l_pre)))
+xDSS_e = 0.5*xDSS+0.5*(xPreCalc[1])
+//cycle = ema(xDSS,3)
+cycleh = ema(xDSS_e,3)
+plot(cycleh, color=#ff8c00, linewidth = 1, title="cycle",transp=0)
+
+
+//stoch
+periodK = 10
+periodD = 3
+smoothK = 3
+k2 = ema(stoch(close, high, low, periodK), 4)
+k1 = ema(stoch(close, high, low, periodK), 3)
+d2 = ema(k1, 4)
+//obv = cum(sign(change(src)) * volume)
+rsi1 =rsi(src,14)
+plot(rsi1, "rsi", color=#800080,linewidth = 2,transp = 10)
+plot(k2, "stoch K", color=#0095ff, linewidth = 1, transp=0)
+plot(d2, "stoch D", color=#FF0000, linewidth =2, transp=0)
+//plot(avg, color = #800080, linewidth = 1, title = "avg")
+h_40 = plot(39.5,color = #edaa00, transp = 0)
+h_60 = plot(60.5,color = #03fc3d, transp = 0)
+plot(19, color = #000000, transp = 0)
+plot(81,color= #000000, transp = 0)

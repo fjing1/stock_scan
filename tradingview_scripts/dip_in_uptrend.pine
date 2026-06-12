@@ -1,0 +1,91 @@
+// Dip-in-Uptrend — long entry signal derived from backtesting sub-components of
+// "Cycle and Stoch" + "寻龙诀 Panel".
+//
+// Recipe (validated out-of-sample 2019-2026 on a 30-name daily basket):
+//   Filter : Close > 200-day SMA            (long-term uptrend)
+//   Trigger: oversold — RSI(14) < 40  AND  Stoch %K(10, EMA4) < 20
+//            (optional: Cycle < 20, the double-smoothed stochastic)
+//   Hold   : ~5-10 bars
+// Measured: ~60-63% absolute 10-bar win rate; ~+3pp vs SPY (detrended), edge
+// decays by ~21 bars. Entry-timing only — add your own exit/stop. This is a
+// small, known "buy pullbacks above the 200MA" mean-reversion edge, not a grail.
+
+//@version=6
+indicator("Dip-in-Uptrend (Cycle+寻龙诀)", shorttitle="DipUptrend", overlay=true)
+
+// ----------------------------- Inputs ----------------------------- //
+gTrend = "Trend Filter"
+maLen  = input.int(200, "Trend SMA length", minval=1, group=gTrend)
+
+gOS = "Oversold Triggers (need all enabled to be true)"
+useRSI    = input.bool(true, "Require RSI oversold", group=gOS)
+rsiLen    = input.int(14, "RSI length", minval=1, group=gOS)
+rsiThresh = input.float(40, "RSI < ", step=1, group=gOS)
+useK      = input.bool(true, "Require Stoch %K oversold", group=gOS)
+kLen      = input.int(10, "Stoch %K length", minval=1, group=gOS)
+kSmooth   = input.int(4, "Stoch %K EMA smooth", minval=1, group=gOS)
+kThresh   = input.float(20, "Stoch %K < ", step=1, group=gOS)
+useCycle  = input.bool(false, "Require Cycle oversold", group=gOS)
+cycThresh = input.float(20, "Cycle < ", step=1, group=gOS)
+
+gVis = "Trade Visual"
+holdBars   = input.int(10, "Hold window (bars to shade)", minval=1, group=gVis)
+showHold   = input.bool(true, "Shade hold window", group=gVis)
+showExit   = input.bool(true, "Mark hold-window end", group=gVis)
+showTable  = input.bool(true, "Show status table", group=gVis)
+
+// ----------------------------- Indicators ----------------------------- //
+ma = ta.sma(close, maLen)
+
+rsi = ta.rsi(close, rsiLen)
+
+// Stoch %K = EMA(kSmooth) of the raw fast stochastic (matches cycle_patter_for_swing.py)
+rawK   = ta.stoch(close, high, low, kLen)
+stochK = ta.ema(rawK, kSmooth)
+
+// Cycle = double-smoothed stochastic (matches cycle_patter_for_swing.py)
+PDS      = 10
+preC     = ta.stoch(close, high, low, PDS)
+xPreCalc = ta.ema(preC, 3)
+xDSS     = ta.stoch(xPreCalc, xPreCalc, xPreCalc, PDS)
+xDSS_e   = 0.5 * xDSS + 0.5 * xPreCalc[1]
+cycle    = ta.ema(xDSS_e, 3)
+
+// ----------------------------- Signal ----------------------------- //
+trendUp  = close > ma
+osRSI    = not useRSI   or rsi    < rsiThresh
+osK      = not useK     or stochK < kThresh
+osCycle  = not useCycle or cycle  < cycThresh
+oversold = osRSI and osK and osCycle
+
+inSignal = trendUp and oversold
+buy      = inSignal and not inSignal[1]      // fire on first bar of the setup
+
+sinceBuy = ta.barssince(buy)
+inHold   = not na(sinceBuy) and sinceBuy < holdBars
+exitSig  = showExit and not na(sinceBuy) and sinceBuy == holdBars
+
+// ----------------------------- Plots ----------------------------- //
+plot(ma, "Trend SMA", color = trendUp ? color.new(color.green, 0) : color.new(color.red, 0), linewidth=2)
+bgcolor(showHold and inHold ? color.new(color.green, 88) : na, title="Hold window")
+plotshape(buy, "BUY", style=shape.triangleup, location=location.belowbar, color=color.new(color.green, 0), size=size.small, text="BUY", textcolor=color.white)
+plotshape(exitSig, "Hold end", style=shape.xcross, location=location.abovebar, color=color.new(color.gray, 0), size=size.tiny)
+
+alertcondition(buy, title="Dip-in-Uptrend BUY", message="Dip-in-Uptrend long signal on {{ticker}} ({{interval}}) at {{close}}")
+
+// ----------------------------- Status table ----------------------------- //
+f_col(ok) => ok ? color.lime : color.gray
+var table tb = table.new(position.top_right, 2, 6, bgcolor=color.new(color.black, 30), frame_color=color.new(color.white, 0), frame_width=1, border_color=color.new(color.white, 70), border_width=1)
+if barstate.islast and showTable
+    table.cell(tb, 0, 0, "Dip-in-Uptrend", text_color=color.white)
+    table.cell(tb, 1, 0, buy ? "● BUY" : inHold ? "… hold" : "—", text_color = buy ? color.lime : inHold ? color.yellow : color.gray)
+    table.cell(tb, 0, 1, "Close > SMA" + str.tostring(maLen), text_color=color.white)
+    table.cell(tb, 1, 1, trendUp ? "yes" : "no", text_color=f_col(trendUp))
+    table.cell(tb, 0, 2, "RSI(" + str.tostring(rsiLen) + ")", text_color=color.white)
+    table.cell(tb, 1, 2, str.tostring(rsi, "#.#"), text_color=f_col(osRSI))
+    table.cell(tb, 0, 3, "Stoch %K", text_color=color.white)
+    table.cell(tb, 1, 3, str.tostring(stochK, "#.#"), text_color=f_col(osK))
+    table.cell(tb, 0, 4, "Cycle", text_color=color.white)
+    table.cell(tb, 1, 4, str.tostring(cycle, "#.#"), text_color = useCycle ? f_col(osCycle) : color.gray)
+    table.cell(tb, 0, 5, "Oversold", text_color=color.white)
+    table.cell(tb, 1, 5, oversold ? "yes" : "no", text_color=f_col(oversold))

@@ -1,0 +1,241 @@
+// This Pine Script(R) code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © bigbenv5
+
+//@version=6
+indicator(title="寻龙诀 Panel V1", shorttitle="寻龙诀之分金 Panel", overlay=false, format=format.price, precision=2, max_labels_count=100, scale=scale.right)
+
+//=============================//
+// 0) 工具函数
+//=============================//
+safeDiv(num, den) => den == 0.0 ? 0.0 : num / den
+hist(src, n) => n <= 0 ? src : src[n]
+
+xsa(src, len, wei) =>
+    var float sumf = 0.0
+    var float ma = 0.0
+    var float out = na
+    sumf := nz(sumf[1]) - nz(hist(src, len)) + src
+    ma := na(hist(src, len)) ? na : sumf / len
+    out := na(out[1]) ? ma : (src * wei + out[1] * (len - wei)) / len
+    out
+
+f_pct(x) =>
+    str.tostring(x, "#.##") + "%"
+
+//=============================//
+// 1) L2 t/p 与趋势 table
+//=============================//
+grp_l2 = "L2 / 趋势窗口"
+K = input.int(9, "K", minval=1, group=grp_l2)
+D = input.int(3, "D", minval=1, group=grp_l2)
+MidPeriod = input.int(58, "MidPeriod", minval=1, group=grp_l2)
+show_trend_table = input.bool(true, "显示右侧趋势窗口", group=grp_l2)
+trend_pos_opt = input.string("右上", "窗口位置", options=["右上","右下","左上","左下"], group=grp_l2)
+table_alpha = input.int(70, "窗口底色透明度", minval=0, maxval=100, group=grp_l2)
+
+f_L2_tp() =>
+    denK = math.max(ta.highest(high, K) - ta.lowest(low, K), syminfo.mintick)
+    var1b = (ta.highest(high, K) - close) / denK * 100 - 70
+    var2b = xsa(var1b, K, 1) + 100
+    var3b = (close - ta.lowest(low, K)) / denK * 100
+    var4b = xsa(var3b, D, 1)
+    var5b = xsa(var4b, D, 1) + 100
+    var6b = var5b - var2b
+    trend = var6b > 45 ? var6b - 45 : 0.0
+
+    var2q = hist(low, 1)
+    absMove = math.abs(low - var2q)
+    upMove = math.max(low - var2q, 0)
+    s_abs = xsa(absMove, D, 1)
+    s_up = xsa(upMove, D, 1)
+    var3q = safeDiv(s_abs, s_up) * 100.0
+    var4q = ta.ema(ta.change(close) > 0 ? var3q * 10.0 : var3q / 10.0, D)
+    var5q = ta.lowest(low, 30)
+    var6q = ta.highest(var4q, 30)
+    smaMid = ta.sma(close, MidPeriod)
+    var7q = not na(smaMid) ? 1.0 : 0.0
+    var8q = ta.ema(low <= var5q ? (var4q + var6q * 2.0) / 2.0 : 0.0, D) / 999.0 * var7q
+    pump = math.min(var8q, 100.0)
+    [nz(trend), nz(pump)]
+
+[t, p] = f_L2_tp()
+t2 = nz(t[2])
+t1 = nz(t[1])
+t0 = nz(t)
+
+trend_up = (t0 > t1) and (t1 > t2)
+trend_down = (t0 < t1) and (t1 < t2)
+trend_txt = trend_up ? "↑ 增大" : trend_down ? "↓ 减小" : "→ 震荡"
+trend_col = trend_up ? color.lime : trend_down ? color.red : color.orange
+
+f_pos(opt) =>
+    opt == "右上" ? position.top_right :
+     opt == "右下" ? position.bottom_right :
+     opt == "左上" ? position.top_left :
+     position.bottom_left
+
+var table trend_tb = table.new(
+     position=f_pos(trend_pos_opt),
+     columns=4, rows=2,
+     bgcolor=color.new(color.black, table_alpha),
+     frame_color=color.new(color.white, 0),
+     frame_width=1,
+     border_color=color.new(color.white, 0),
+     border_width=1
+)
+
+if barstate.islast
+    table.clear(trend_tb, 0, 0, 3, 1)
+    if show_trend_table
+        bg_head = color.new(color.black, math.min(table_alpha + 10, 95))
+        bg_body = color.new(color.black, table_alpha)
+        table.cell(trend_tb, 0, 0, "t-2", text_color=color.white, bgcolor=bg_head)
+        table.cell(trend_tb, 1, 0, "t-1", text_color=color.white, bgcolor=bg_head)
+        table.cell(trend_tb, 2, 0, "t0", text_color=color.white, bgcolor=bg_head)
+        table.cell(trend_tb, 3, 0, "趋势", text_color=color.white, bgcolor=bg_head)
+        table.cell(trend_tb, 0, 1, f_pct(t2), text_color=trend_col, bgcolor=bg_body)
+        table.cell(trend_tb, 1, 1, f_pct(t1), text_color=trend_col, bgcolor=bg_body)
+        table.cell(trend_tb, 2, 1, f_pct(t0), text_color=trend_col, bgcolor=bg_body)
+        table.cell(trend_tb, 3, 1, trend_txt, text_color=trend_col, bgcolor=bg_body)
+
+//=============================//
+// 2) 红绿柱体系
+//=============================//
+grp_rg = "红绿柱"
+show_green = input.bool(true, "显示绿柱(bbuy)", group=grp_rg)
+show_red = input.bool(true, "显示红柱(varr1下穿)", group=grp_rg)
+red_level = input.float(82.0, "红柱阈值（旧版=82）", step=0.5, group=grp_rg)
+green_alpha = input.int(55, "绿柱透明度", minval=0, maxval=100, group=grp_rg)
+red_alpha = input.int(55, "红柱透明度", minval=0, maxval=100, group=grp_rg)
+varr_len = input.int(6, "varr1长度（旧版=6）", minval=1, group=grp_rg)
+
+f_bbuy() =>
+    d1 = (close + low + high) / 3.0
+    d2 = ta.ema(d1, 6)
+    d3 = ta.ema(d2, 5)
+    ta.crossover(d2, d3)
+
+bbuy = f_bbuy()
+upPart = xsa(math.max(close - close[1], 0), varr_len, 1)
+absPart = xsa(math.abs(close - close[1]), varr_len, 1)
+varr1 = 100.0 * safeDiv(upPart, absPart)
+varr1_crossDn = ta.crossunder(varr1, red_level)
+
+green_sig = show_green and bbuy
+red_sig = show_red and varr1_crossDn
+
+bgcolor(green_sig ? color.new(color.lime, green_alpha) : na)
+bgcolor(red_sig ? color.new(color.red, red_alpha) : na)
+
+//=============================//
+// 3) RSI 图（基于 TradingView 原版 RSI）
+//=============================//
+grp_rsi = "RSI Settings"
+rsiLengthInput = input.int(14, minval=1, title="RSI Length", group=grp_rsi)
+rsiSourceInput = input.source(close, "Source", group=grp_rsi)
+calculateDivergence = input.bool(false, title="Calculate Divergence", group=grp_rsi, display=display.none, tooltip="Calculating divergences is needed in order for divergence alerts to fire.")
+
+change = ta.change(rsiSourceInput)
+up = ta.rma(math.max(change, 0), rsiLengthInput)
+down = ta.rma(-math.min(change, 0), rsiLengthInput)
+rsi = down == 0 ? 100 : up == 0 ? 0 : 100 - (100 / (1 + up / down))
+
+rsiPlot = plot(rsi, "RSI", color=#7E57C2)
+rsiUpperBand = hline(70, "RSI Upper Band", color=#787B86)
+midline = hline(50, "RSI Middle Band", color=color.new(#787B86, 50))
+rsiLowerBand = hline(30, "RSI Lower Band", color=#787B86)
+fill(rsiUpperBand, rsiLowerBand, color=color.rgb(126, 87, 194, 90), title="RSI Background Fill")
+midLinePlot = plot(50, color=na, editable=false, display=display.none)
+fill(rsiPlot, midLinePlot, 100, 70, top_color=color.new(color.green, 0), bottom_color=color.new(color.green, 100), title="Overbought Gradient Fill")
+fill(rsiPlot, midLinePlot, 30, 0, top_color=color.new(color.red, 100), bottom_color=color.new(color.red, 0), title="Oversold Gradient Fill")
+
+// Smoothing MA inputs
+GRP = "Smoothing"
+TT_BB = "Only applies when 'SMA + Bollinger Bands' is selected. Determines the distance between the SMA and the bands."
+maTypeInput = input.string("SMA", "Type", options=["None", "SMA", "SMA + Bollinger Bands", "EMA", "SMMA (RMA)", "WMA", "VWMA"], group=GRP, display=display.none)
+var isBB = maTypeInput == "SMA + Bollinger Bands"
+maLengthInput = input.int(14, "Length", group=GRP, display=display.none, active=maTypeInput != "None")
+bbMultInput = input.float(2.0, "BB StdDev", minval=0.001, maxval=50, step=0.5, tooltip=TT_BB, group=GRP, display=display.none, active=isBB)
+var enableMA = maTypeInput != "None"
+
+ma(source, length, MAtype) =>
+    switch MAtype
+        "SMA" => ta.sma(source, length)
+        "SMA + Bollinger Bands" => ta.sma(source, length)
+        "EMA" => ta.ema(source, length)
+        "SMMA (RMA)" => ta.rma(source, length)
+        "WMA" => ta.wma(source, length)
+        "VWMA" => ta.vwma(source, length)
+
+smoothingMA = enableMA ? ma(rsi, maLengthInput, maTypeInput) : na
+smoothingStDev = isBB ? ta.stdev(rsi, maLengthInput) * bbMultInput : na
+plot(smoothingMA, "RSI-based MA", color=color.yellow, display=enableMA ? display.all : display.none, editable=enableMA)
+bbUpperBand = plot(smoothingMA + smoothingStDev, title="Upper Bollinger Band", color=color.green, display=isBB ? display.all : display.none, editable=isBB)
+bbLowerBand = plot(smoothingMA - smoothingStDev, title="Lower Bollinger Band", color=color.green, display=isBB ? display.all : display.none, editable=isBB)
+fill(bbUpperBand, bbLowerBand, color=isBB ? color.new(color.green, 90) : na, title="Bollinger Bands Background Fill", display=isBB ? display.all : display.none, editable=isBB)
+
+// Divergence
+lookbackRight = 5
+lookbackLeft = 5
+rangeUpper = 60
+rangeLower = 5
+bearColor = color.red
+bullColor = color.green
+textColor = color.white
+noneColor = color.new(color.white, 100)
+
+_inRange(bool cond) =>
+    bars = ta.barssince(cond)
+    rangeLower <= bars and bars <= rangeUpper
+
+plFound = false
+phFound = false
+bullCond = false
+bearCond = false
+rsiLBR = rsi[lookbackRight]
+
+if calculateDivergence
+    plFound := not na(ta.pivotlow(rsi, lookbackLeft, lookbackRight))
+    rsiHL = rsiLBR > ta.valuewhen(plFound, rsiLBR, 1) and _inRange(plFound[1])
+    lowLBR = low[lookbackRight]
+    priceLL = lowLBR < ta.valuewhen(plFound, lowLBR, 1)
+    bullCond := priceLL and rsiHL and plFound
+
+    phFound := not na(ta.pivothigh(rsi, lookbackLeft, lookbackRight))
+    rsiLH = rsiLBR < ta.valuewhen(phFound, rsiLBR, 1) and _inRange(phFound[1])
+    highLBR = high[lookbackRight]
+    priceHH = highLBR > ta.valuewhen(phFound, highLBR, 1)
+    bearCond := priceHH and rsiLH and phFound
+
+plot(plFound ? rsiLBR : na, offset=-lookbackRight, title="Regular Bullish", linewidth=2, color=(bullCond ? bullColor : noneColor), display=display.pane, editable=calculateDivergence)
+plotshape(bullCond ? rsiLBR : na, offset=-lookbackRight, title="Regular Bullish Label", text=" Bull ", style=shape.labelup, location=location.absolute, color=bullColor, textcolor=textColor, display=display.pane, editable=calculateDivergence)
+plot(phFound ? rsiLBR : na, offset=-lookbackRight, title="Regular Bearish", linewidth=2, color=(bearCond ? bearColor : noneColor), display=display.pane, editable=calculateDivergence)
+plotshape(bearCond ? rsiLBR : na, offset=-lookbackRight, title="Regular Bearish Label", text=" Bear ", style=shape.labeldown, location=location.absolute, color=bearColor, textcolor=textColor, display=display.pane, editable=calculateDivergence)
+
+alertcondition(bullCond, title="Regular Bullish Divergence", message="Found a new Regular Bullish Divergence, `Pivot Lookback Right` number of bars to the left of the current bar.")
+alertcondition(bearCond, title="Regular Bearish Divergence", message="Found a new Regular Bearish Divergence, `Pivot Lookback Right` number of bars to the left of the current bar.")
+
+//=============================//
+// 4) RSI 最新数据 table
+//=============================//
+rsi2 = nz(rsi[2])
+rsi1 = nz(rsi[1])
+rsi0 = nz(rsi)
+rsi_trend_up = (rsi0 > rsi1) and (rsi1 > rsi2)
+rsi_trend_down = (rsi0 < rsi1) and (rsi1 < rsi2)
+rsi_trend_txt = rsi_trend_up ? "↑ 增大" : rsi_trend_down ? "↓ 减小" : "→ 震荡"
+rsi_trend_col = rsi_trend_up ? color.lime : rsi_trend_down ? color.red : color.orange
+
+if barstate.islast
+    table.clear(trend_tb, 0, 0, 3, 1)
+    if show_trend_table
+        bg_head = color.new(color.black, math.min(table_alpha + 10, 95))
+        bg_body = color.new(color.black, table_alpha)
+        table.cell(trend_tb, 0, 0, "RSI-2", text_color=color.white, bgcolor=bg_head)
+        table.cell(trend_tb, 1, 0, "RSI-1", text_color=color.white, bgcolor=bg_head)
+        table.cell(trend_tb, 2, 0, "RSI", text_color=color.white, bgcolor=bg_head)
+        table.cell(trend_tb, 3, 0, "趋势", text_color=color.white, bgcolor=bg_head)
+        table.cell(trend_tb, 0, 1, str.tostring(rsi2, "#.##"), text_color=rsi_trend_col, bgcolor=bg_body)
+        table.cell(trend_tb, 1, 1, str.tostring(rsi1, "#.##"), text_color=rsi_trend_col, bgcolor=bg_body)
+        table.cell(trend_tb, 2, 1, str.tostring(rsi0, "#.##"), text_color=rsi_trend_col, bgcolor=bg_body)
+        table.cell(trend_tb, 3, 1, rsi_trend_txt, text_color=rsi_trend_col, bgcolor=bg_body)
