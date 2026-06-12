@@ -55,6 +55,7 @@ against the trading literature.
 | 9 | 15m sell bar as exit? | `exit_15m_test.py` | ❌ **harmful** (sells into weakness) |
 | 10 | Broaden: which entry indicators have edge? | `entry_sweep.py` | ✅ oversold+>MA200 best; momentum needs a trend-exit |
 | 11 | Momentum entries × trend-following exits? | `momentum_exit_sweep.py` | ⚠️ high absolute PF but it's **beta, not alpha** (detrended <50%) |
+| 12 | Cross-sectional market-neutral ensemble? | `market_neutral_ensemble.py` | ✅ **real alpha** (beta≈0, OOS-persistent) — but turnover/survivorship-limited |
 
 ### Key results
 
@@ -124,6 +125,20 @@ Not replicable retail: HFT speed/co-location, alternative data at scale, cheap
 leverage/financing, market-making (earn vs pay the spread), large research teams.
 Highest-value next move: a **cross-sectional, market-neutral ensemble** — see §8.
 
+**Market-neutral ensemble — real alpha, but turnover/survivorship-limited (12).**
+Weekly, score every name by `z(-5d ret) + z(12-1 mom) + z(close/MA200) + z(-RSI2)`;
+long top quintile / short bottom quintile, dollar-neutral. The long-short spread is
+**market-neutral (beta-to-SPY −0.11 train / +0.02 test)** and shows **OOS-persistent
+alpha**: gross Sharpe 0.60 → 0.84, 55–56% of weeks positive, through the 2022 bear.
+This is the project's one clean *alpha* (vs the momentum system's beta). Honest
+limits: (a) **turnover ~120%/week** → after a 10bps cost the Sharpe falls to
+0.26 (train) / 0.58 (test) — deployability is cost-sensitive; (b) **survivorship
+bias** (current-names universe) inflates the long leg — long-only top-quintile
+"alpha vs SPY" (~+23%/yr) is overstated. Trustworthy reads: beta≈0 and OOS
+consistency. Improvements (Citadel playbook): slower signals / rebalance threshold
+to cut turnover, more uncorrelated alphas to lift Sharpe, sector/size neutralization,
+and a point-in-time universe to remove survivorship.
+
 ## 5. The resulting system
 
 ```
@@ -151,6 +166,7 @@ HOLD   : ~1–3 weeks
 - `combo_search.py` — sub-component grid search (found the entry)
 - `entry_sweep.py` — broad entry-indicator library (32 variants, OOS)
 - `momentum_exit_sweep.py` — momentum entries × trend-following exits (beta check)
+- `market_neutral_ensemble.py` — cross-sectional long-short alpha ensemble
 - `exit_search.py` — exit-rule search (found %K≥70; stops hurt)
 - `exit_strategies_lit.py` — literature exits (BBmid/RSI2 upgrade)
 - `rank_test.py` — which feature ranks signals (12m RS)
