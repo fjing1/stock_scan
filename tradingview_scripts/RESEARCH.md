@@ -57,6 +57,7 @@ against the trading literature.
 | 11 | Momentum entries × trend-following exits? | `momentum_exit_sweep.py` | ⚠️ high absolute PF but it's **beta, not alpha** (detrended <50%) |
 | 12 | Cross-sectional market-neutral ensemble? | `market_neutral_ensemble.py` | ✅ **real alpha** (beta≈0, OOS-persistent) — but turnover/survivorship-limited |
 | 13 | Cut ensemble turnover for net edge? | `mn_turnover.py` | ✅ **rebalance buffer** halves turnover, ~2× train net Sharpe; smoothing/low-freq hurt |
+| 14 | Stack more alphas + sector-neutralize? | `alpha_stack.py` | ❌ naive stacking **hurts** (negative/decayed anomalies); balanced 4-alpha stays best |
 
 ### Key results
 
@@ -149,6 +150,20 @@ both HURT: they wash out the fast short-term-reversal alpha and (monthly) let be
 creep to 0.14–0.20. Net Sharpe ~0.5 is still modest — the next lever is stacking more
 uncorrelated alphas, not more turnover tuning.
 
+**Multi-alpha stack — more alphas made it WORSE (14).** Added low-vol, MAX/lottery,
+52-week-high, and 1-month reversal to the 4-alpha blend. Average pairwise correlation
+was low (0.12 — genuinely diversifying), BUT half the added anomalies are
+negative-Sharpe in this survivor universe / recent regime (low-vol −0.85 with β−0.96,
+MAX −0.82, 52w-high ≈0) — so equal-weighting dragged the ensemble from +0.53 to −0.08
+net and added a −0.46 beta. Weighting by train Sharpe overfit to the reversal/oversold
+cluster, which had **decayed and flipped negative in test (+0.74 → −0.30)** — a live
+edge-decay demonstration. Sector-neutralization didn't rescue bad components. The
+**balanced 4-alpha blend + buffer remains best** (test 0.53, β 0.03) precisely because
+it mixes a decaying reversal with holding-up momentum/trend. Lesson: diversification
+needs individually-positive, non-decayed components; with OHLCV alone the easy
+cross-sectional alphas are exhausted — further lift needs new orthogonal data
+(fundamentals / revisions / alt-data) and a survivorship-free universe.
+
 ## 5. The resulting system
 
 ```
@@ -178,6 +193,7 @@ HOLD   : ~1–3 weeks
 - `momentum_exit_sweep.py` — momentum entries × trend-following exits (beta check)
 - `market_neutral_ensemble.py` — cross-sectional long-short alpha ensemble
 - `mn_turnover.py` — turnover-reduction pass (buffer/smoothing/frequency)
+- `alpha_stack.py` — multi-alpha stacking + sector-neutralization (8 alphas)
 - `exit_search.py` — exit-rule search (found %K≥70; stops hurt)
 - `exit_strategies_lit.py` — literature exits (BBmid/RSI2 upgrade)
 - `rank_test.py` — which feature ranks signals (12m RS)
@@ -211,6 +227,12 @@ HOLD   : ~1–3 weeks
 - **Cross-sectional, market-neutral ensemble** (Citadel-style, §4b): rank the
   universe daily by a blend of validated entries, trade the top-vs-bottom spread,
   size by volatility — targets alpha directly and is the highest-value upgrade.
+  *Status: built (#12), turnover-tuned (#13), alpha-stacking explored (#14).
+  Recommended config = balanced 4-alpha + rebalance buffer (~0.5 net Sharpe, β≈0).*
+- **New orthogonal data** is now the binding constraint: OHLCV cross-sectional alphas
+  are exhausted (#14). Real Sharpe lift needs fundamentals / earnings & analyst
+  revisions / alt-data, plus a **point-in-time, survivorship-free universe** (CRSP /
+  Sharadar / Norgate) — neither available via Yahoo.
 
 ## 9. Reproduce
 
