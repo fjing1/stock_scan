@@ -53,6 +53,8 @@ against the trading literature.
 | 7 | How to rank signals? | `rank_test.py` | ✅ **12-month relative strength** (not oversold depth) |
 | 8 | Which intraday TF confirms best? | `intraday_confirm_test.py` | ~ **15m** sweet spot (weak: z≈1.9, 60-day data) |
 | 9 | 15m sell bar as exit? | `exit_15m_test.py` | ❌ **harmful** (sells into weakness) |
+| 10 | Broaden: which entry indicators have edge? | `entry_sweep.py` | ✅ oversold+>MA200 best; momentum needs a trend-exit |
+| 11 | Momentum entries × trend-following exits? | `momentum_exit_sweep.py` | ⚠️ high absolute PF but it's **beta, not alpha** (detrended <50%) |
 
 ### Key results
 
@@ -87,6 +89,41 @@ only 15m both fires selectively and shows a lift (71% confirmed vs 48% unconfirm
 but z≈1.9 on ~67 samples in one regime — a sensible "wait for buyers" overlay, not
 a proven booster. Finer TFs confirm on ~every bar (no information).
 
+**Broad entry sweep — oversold+trend dominates; momentum needs its own exit (10).**
+A 32-variant entry library (mean-reversion / breakout / volume / candlestick), each
+backtested with the standardized SMA20 exit, ranks `StochK<20 & >MA200` first (test
+PF 1.93 / 60% detrended win — the only "robust"-flagged signal), with `close<lower-BB
+& >MA200` and `3-down-days & >MA200` close behind, and `RSI2<10 & >MA200` the
+highest win rate (76%). The >MA200 filter lifts nearly every mean-reversion entry.
+Momentum/breakout entries (52w-high, Donchian, MACD-cross) score poorly *here* —
+but that is an exit mismatch (a mean-revert exit sells a breakout instantly), so they
+must be re-tested with a trend-following exit before any verdict.
+
+**Momentum × trend-exit — high return, but beta not alpha (11).** Paired with
+trend-following exits, momentum entries DO make money: MACD-cross + 63-day hold returns
++4.85%/trade, PF 2.71, stable OOS; a simple time-based hold beats trailing stops
+(Chandelier/PSAR cut win rate to 25–48%). BUT the detrended (vs-SPY) win rate is <50%
+for every momentum combo — these capture **market beta over a multi-month hold, not a
+timing edge**. Only the mean-reversion dip-in-uptrend shows true alpha (detrended
+~56–60%). Lesson: absolute PF can hide beta; judge on excess return.
+
+## 4b. Principles from elite quant practice (Citadel / RenTec / Two Sigma)
+
+Adoptable (process, not secrets) and mapped to this project:
+- **Alpha, not beta** — neutralize market/sector/size; chase excess return. (Our
+  detrended metric; experiment 11 shows why it matters.)
+- **Many small uncorrelated bets, market-neutral** — rank the universe and trade the
+  spread (long top / short-or-underweight bottom) rather than discrete directional bets.
+- **Ensemble weak signals** — blend the validated entries (StochK<20, lower-BB,
+  3-down-days, RS) into one composite alpha, not a single trigger.
+- **Costs & capacity first-class**; **risk/sizing drives returns** (vol-target, ATR
+  sizing, per-name/sector caps); **overfitting paranoia** (walk-forward, deflated
+  Sharpe, multiple-testing); **edges decay** (re-validate; Connors RSI2 has decayed).
+
+Not replicable retail: HFT speed/co-location, alternative data at scale, cheap
+leverage/financing, market-making (earn vs pay the spread), large research teams.
+Highest-value next move: a **cross-sectional, market-neutral ensemble** — see §8.
+
 ## 5. The resulting system
 
 ```
@@ -112,6 +149,8 @@ HOLD   : ~1–3 weeks
 - `cycle_mtf_winrate.py`, `cycle_mtf_winrate_v2.py` — MTF cycle alignment (null)
 - `xunlong_winrate.py` — MTF panel alignment (null)
 - `combo_search.py` — sub-component grid search (found the entry)
+- `entry_sweep.py` — broad entry-indicator library (32 variants, OOS)
+- `momentum_exit_sweep.py` — momentum entries × trend-following exits (beta check)
 - `exit_search.py` — exit-rule search (found %K≥70; stops hurt)
 - `exit_strategies_lit.py` — literature exits (BBmid/RSI2 upgrade)
 - `rank_test.py` — which feature ranks signals (12m RS)
@@ -135,10 +174,16 @@ HOLD   : ~1–3 weeks
 ## 8. Next steps (open)
 
 - Swap in a survivorship-free universe (point-in-time S&P 1500) and re-confirm.
+- **Pair momentum/breakout entries (52w-high, Donchian, MACD) with trend-following
+  exits** (Chandelier / MA-trail) — they were unfairly judged under the mean-revert
+  exit; this is the open "buying × exiting" cross-study.
 - A/B the **SMA20 (BBmid) exit** into the live Pine + scanner (small upgrade over %K≥70).
 - Add `--min-price` / `--min-dollar-volume` liquidity filter to the scanner.
 - Regime-conditioning: does the edge concentrate in high-vol / specific sectors?
 - Expectancy & equity-curve / drawdown at the portfolio level (not just per-trade).
+- **Cross-sectional, market-neutral ensemble** (Citadel-style, §4b): rank the
+  universe daily by a blend of validated entries, trade the top-vs-bottom spread,
+  size by volatility — targets alpha directly and is the highest-value upgrade.
 
 ## 9. Reproduce
 
