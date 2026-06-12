@@ -1,0 +1,159 @@
+# Swing-Signal Research Project
+
+A systematic study: take two TradingView indicators, port them to Python, and
+test — rigorously, out-of-sample — whether their signals (alone, combined, or
+across timeframes) produce a tradeable edge. Where an edge is found, build the
+full system (entry → rank → exit), expose it as a TradingView script, and scan
+the market with it.
+
+All code is in this directory and runs against Yahoo Finance via the project
+venv: `vcp_env/bin/python tradingview_scripts/<script>.py`.
+
+---
+
+## 1. Objective
+
+Find a **high-win-rate, evidence-backed** swing signal — not a curve-fit. Every
+claim is judged on a held-out test period, against a drift-adjusted baseline, and
+against the trading literature.
+
+## 2. Data & universe
+
+- **Source:** Yahoo Finance (`yfinance`). Daily history 15–20y; intraday capped by
+  Yahoo at ~60 days (5/15/30m) and ~7 days (1m) — a hard limit that shapes every
+  intraday test below.
+- **Universe:** `stock_symbols_1243.py` (1,233 stocks + 50 ETFs) for scanning;
+  a 30-name liquid basket for backtests; SPY as benchmark.
+- **Survivorship:** baskets are *current* names → absolute win rates are inflated;
+  detrended (vs-SPY) metrics are the trustworthy ones.
+
+## 3. Methodology (the rules we held ourselves to)
+
+- **Out-of-sample split:** train < 2019-01-01, test 2019-01-01 → present (the test
+  window includes the 2022 bear — a real stress test for long systems).
+- **Detrended metric:** forward return *minus SPY* over the same window. Strips
+  market drift, which otherwise makes any long signal look ~55–60% just by being long.
+- **No lookahead:** higher-timeframe series are shifted one bar before forward-fill;
+  signals fire on completed bars; entries at the signal bar's close.
+- **Exit metric:** profit factor + expectancy (win rate alone is misleading — a
+  tight exit can give 90% wins yet make no money).
+- **Honesty about multiplicity:** searching N combos guarantees in-sample winners;
+  only OOS persistence + economic coherence counts. Sample sizes and z-scores reported.
+
+## 4. Experiments & findings
+
+| # | Question | Script | Verdict |
+|---|----------|--------|---------|
+| 1 | Port the two indicators | `cycle_patter_for_swing.py`, `xunlong_panel.py` | ✅ faithful, live-verified |
+| 2 | Cycle turning-points aligned across timeframes? | `cycle_mtf_winrate.py`, `..._v2.py` | ❌ **no edge** (detrended ≈ coin flip) |
+| 3 | 寻龙诀 panel signals across timeframes? | `xunlong_winrate.py` | ❌ **no edge** |
+| 4 | Combine sub-components (1–3 conditions)? | `combo_search.py` | ✅ **found it:** oversold + >MA200 |
+| 5 | Best exit rule? | `exit_search.py` | ✅ sell-into-strength (%K≥70); **stops hurt** |
+| 6 | Literature exits (Connors/Chandelier/SAR/BB)? | `exit_strategies_lit.py` | ✅ **BBmid/SMA20 & RSI(2)≥70** edge out %K≥70 |
+| 7 | How to rank signals? | `rank_test.py` | ✅ **12-month relative strength** (not oversold depth) |
+| 8 | Which intraday TF confirms best? | `intraday_confirm_test.py` | ~ **15m** sweet spot (weak: z≈1.9, 60-day data) |
+| 9 | 15m sell bar as exit? | `exit_15m_test.py` | ❌ **harmful** (sells into weakness) |
+
+### Key results
+
+**MTF alignment is a dead end (2,3).** Across both indicators, both sides, every
+alignment definition, ~120 win-rate cells each — *zero* beat baseline at 2σ once
+detrended. Raw 55–62% win rates were entirely market drift.
+
+**The edge is "buy the dip in a long-term uptrend" (4).** `Close > SMA200` **and**
+`RSI(14) < 40` **and** `Stoch %K(10,EMA4) < 20`. Out-of-sample: ~+3pp detrended,
+~60% absolute 10-day win rate, persistent at 5d & 10d, decays by 21d (short-horizon
+mean reversion). The **>MA200 trend filter is the active ingredient**; oversold
+alone has no edge; a single timeframe beats any multi-timeframe stack. This matches
+the documented Connors "buy pullbacks above the 200-day MA" anomaly.
+
+**Exit: sell into strength, never into weakness (5,6,9).** Best exits are
+reversion targets: **close ≥ SMA20 (Bollinger middle, PF 2.18 / 74% win)**,
+**RSI(2) ≥ 70 (PF 2.22, 5-day hold)**, and **Stoch %K ≥ 70 (PF 1.99, 71% win)**.
+Trailing/volatility stops (Chandelier 39–44% win, ATR, SAR) and any tight stop
+*reduce* profit factor — the deep dips are the ones that bounce. A 15m strong-sell
+bar as exit is the worst (PF collapses 16.7→1.7 in-window): it bails ~2 days in,
+before the bounce. (PSAR shows a high PF but 22% win rate — a trend-following
+shape, not the high-win-rate goal.)
+
+**Ranking: relative strength, not oversold depth (7).** Among dip signals, the
+12-month return tercile sorts forward outcomes strongly (high-RS dips ~58% OOS
+excess-win vs ~52%); pullback depth and trend strength add a little; **how oversold
+a name is carries no ranking information** (counterintuitive, verified). Encoded as
+`DipRank` in the scanner.
+
+**Intraday confirmation: 15m is the sweet spot, but unproven (8).** Of 1/2/5/15/30m,
+only 15m both fires selectively and shows a lift (71% confirmed vs 48% unconfirmed),
+but z≈1.9 on ~67 samples in one regime — a sensible "wait for buyers" overlay, not
+a proven booster. Finer TFs confirm on ~every bar (no information).
+
+## 5. The resulting system
+
+```
+ENTRY  : Close > SMA200  AND  RSI(14) < 40  AND  Stoch %K(10,EMA4) < 20   (daily)
+RANK   : DipRank = 0.45·(12m return) + 0.30·(pullback below MA50) + 0.25·(% above MA200)
+CONFIRM: optional — a strong up 15m candle on >=1.5x avg volume that session
+EXIT   : close >= SMA20  (or Stoch %K >= 70, or RSI(2) >= 70)   — sell into strength
+STOP   : none tight (they hurt); >MA200 is the risk control. Optional wide disaster stop.
+HOLD   : ~1–3 weeks
+```
+
+- TradingView: `dip_in_uptrend.pine` (indicator, BUY/SELL markers + status table),
+  `dip_in_uptrend_strategy.pine` (Strategy Tester: win rate / profit factor / equity).
+- Scanner: `dip_scan.py` → ranked dated CSV in `results/<YYYYMMDD>/`.
+
+## 6. File index
+
+**Ports (faithful Python of the Pine indicators)**
+- `cycle_patter_for_swing.pine` / `.py` — "Cycle and Stoch" oscillator
+- `xunlong_panel.pine` / `.py` — 寻龙诀 Panel V1 (trend/pump/bbuy/varr1/RSI + 0–10 score)
+
+**Studies**
+- `cycle_mtf_winrate.py`, `cycle_mtf_winrate_v2.py` — MTF cycle alignment (null)
+- `xunlong_winrate.py` — MTF panel alignment (null)
+- `combo_search.py` — sub-component grid search (found the entry)
+- `exit_search.py` — exit-rule search (found %K≥70; stops hurt)
+- `exit_strategies_lit.py` — literature exits (BBmid/RSI2 upgrade)
+- `rank_test.py` — which feature ranks signals (12m RS)
+- `intraday_confirm_test.py` — which intraday TF confirms (15m)
+- `exit_15m_test.py` — 15m sell-bar exit (harmful)
+
+**Deliverables**
+- `dip_in_uptrend.pine`, `dip_in_uptrend_strategy.pine` — TradingView
+- `dip_scan.py` — universe scanner with DipRank + 15m confirmation
+
+## 7. Limitations
+
+- **Survivorship bias** inflates absolute win rates (current-name baskets).
+- **Intraday tests are ~60-day, single-regime** (Yahoo limit) — indicative only.
+- **Multiple comparisons** — the entry/exit edges are small; trust the OOS
+  persistence and economic logic, not any single z-score.
+- **Entry/exit on close, modest cost modeling** — the strategy file adds 0.03%
+  commission + 2-tick slippage; portfolio-level sizing not modeled.
+- **No delisted tickers** — would lower absolute (long) results.
+
+## 8. Next steps (open)
+
+- Swap in a survivorship-free universe (point-in-time S&P 1500) and re-confirm.
+- A/B the **SMA20 (BBmid) exit** into the live Pine + scanner (small upgrade over %K≥70).
+- Add `--min-price` / `--min-dollar-volume` liquidity filter to the scanner.
+- Regime-conditioning: does the edge concentrate in high-vol / specific sectors?
+- Expectancy & equity-curve / drawdown at the portfolio level (not just per-trade).
+
+## 9. Reproduce
+
+```bash
+# entry edge search
+vcp_env/bin/python tradingview_scripts/combo_search.py --horizon 10
+# exit comparison (literature)
+vcp_env/bin/python tradingview_scripts/exit_strategies_lit.py
+# ranking feature test
+vcp_env/bin/python tradingview_scripts/rank_test.py
+# scan the universe today
+vcp_env/bin/python tradingview_scripts/dip_scan.py
+```
+
+*Sources for §6 exits (standard references, not live-fetched — sandbox is
+Yahoo-only): Connors & Alvarez, "Short Term Trading Strategies That Work";
+LeBeau, Chandelier Exit; Wilder, "New Concepts in Technical Trading Systems"
+(ATR/SAR/RSI); Bollinger, "Bollinger on Bollinger Bands".*
