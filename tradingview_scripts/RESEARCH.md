@@ -190,6 +190,10 @@ HOLD   : ~1–3 weeks
 - TradingView: `dip_in_uptrend.pine` (indicator, BUY/SELL markers + status table),
   `dip_in_uptrend_strategy.pine` (Strategy Tester: win rate / profit factor / equity).
 - Scanner: `dip_scan.py` → ranked dated CSV in `results/<YYYYMMDD>/`.
+- Sector overlay: `sector_confirm.py` → given a stock, scores its industry's trend
+  (sector SPDR + thematic ETF + peer breadth) so a dip-buy is only high-conviction
+  when the whole industry is healthy. Verdict tiers: STRONG / CONSTRUCTIVE (uptrend
+  intact but pulling back) / WEAK. Reveals when a "stock" dip is really a sector move.
 
 ## 6. File index
 
@@ -216,6 +220,7 @@ HOLD   : ~1–3 weeks
 **Deliverables**
 - `dip_in_uptrend.pine`, `dip_in_uptrend_strategy.pine` — TradingView
 - `dip_scan.py` — universe scanner with DipRank + 15m confirmation
+- `sector_confirm.py` — top-down sector/industry trend confirmation overlay
 
 ## 7. Limitations
 
