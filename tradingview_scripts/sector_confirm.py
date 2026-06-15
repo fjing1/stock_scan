@@ -15,6 +15,7 @@ healthy. Given a stock, this:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 
@@ -89,6 +90,16 @@ def fetch(symbols, period="2y"):
     return out
 
 
+def load_industry_map():
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "industry_map.json")
+    if os.path.exists(p):
+        try:
+            return json.load(open(p))
+        except Exception:
+            return None
+    return None
+
+
 def trend_health(df):
     """0-5 trend score + components for a price series."""
     if df is None or len(df) < 220:
@@ -148,22 +159,30 @@ def main(argv=None):
             print(f"  {e:<5}{h['px']:>9.2f}{h['pct200']:>+9.1f}{str(h['ma_align']):>9}"
                   f"{str(h['ma_rising']):>7}{h['mom3']:>+7.1f}{h['mom6']:>+7.1f}{h['score']:>5}/5")
 
-    # --- industry peers: curated set if available, else scan repo sector list ---
-    peers = []
+    # --- industry peers: cached map (best) > curated > live repo scan ---
+    peers, src = [], "none"
+    imap = load_industry_map()
+    if imap and industry in imap.get("by_industry", {}):
+        peers = [p for p in imap["by_industry"][industry] if p != sym]
+        src = f"cached map ({imap.get('n','?')} tickers, gen {str(imap.get('generated_utc'))[:10]})"
     if industry in INDUSTRY_PEERS:
-        peers = [p for p in INDUSTRY_PEERS[industry] if p != sym]
-    else:
+        peers = list(dict.fromkeys(peers + [p for p in INDUSTRY_PEERS[industry] if p != sym]))
+        src = src if src != "none" else "curated"
+    if not peers:
         repo = SECTOR_REPO.get(sector)
         if repo:
             import stock_symbols_1243 as ss
             members = [s for s in getattr(ss, repo, []) if s != sym][: args.peers]
-            print(f"\nscanning up to {len(members)} {sector} members for industry == '{industry}' ...", flush=True)
+            print(f"\nno cached/curated peers; live-scanning {len(members)} {sector} members ...", flush=True)
             for m in members:
                 try:
                     if yf.Ticker(m).info.get("industry") == industry:
                         peers.append(m)
                 except Exception:
                     continue
+            src = "live repo scan"
+    peers = peers[: args.peers]
+    print(f"peer source: {src}")
     peers = [sym] + peers
     pdata = fetch(peers)
 
