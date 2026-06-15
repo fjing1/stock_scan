@@ -60,6 +60,7 @@ against the trading literature.
 | 14 | Stack more alphas + sector-neutralize? | `alpha_stack.py` | ❌ naive stacking **hurts** (negative/decayed anomalies); balanced 4-alpha stays best |
 | 15 | Analyst-revision momentum (free, non-price)? | `revision_alpha.py` | ❌ orthogonal (corr≈0) but **negative** OOS — ratings lag price; adding it hurt |
 | 16 | Sector rotation — "sector A up → B next"? | `sector_rotation.py` | ❌ no clean lead-lag (weak & negative); momentum rotation ≈ market; real rotation is macro-regime-driven |
+| 17 | Macro risk-on/off regime timing (Yahoo proxies)? | `macro_regime.py` | ❌ no edge — regime doesn't predict returns; risk-off timing cuts maxDD but lowers Sharpe; cyc/def inverted (mean-reversion). Official FRED test pending restart |
 
 ### Key results
 
@@ -213,6 +214,7 @@ HOLD   : ~1–3 weeks
 - `alpha_stack.py` — multi-alpha stacking + sector-neutralization (8 alphas)
 - `revision_alpha.py` — analyst-revision-momentum (non-price) alpha test
 - `sector_rotation.py` — sector lead-lag / rotation-momentum market research
+- `macro_regime.py` — macro risk-on/off regime + market-timing test (Yahoo proxies)
 - `exit_search.py` — exit-rule search (found %K≥70; stops hurt)
 - `exit_strategies_lit.py` — literature exits (BBmid/RSI2 upgrade)
 - `rank_test.py` — which feature ranks signals (12m RS)
