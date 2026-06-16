@@ -20,3 +20,4 @@ results/
 # OS
 .DS_Store
 Thumbs.db
+tradingview_scripts/industry_map.json.tmp
