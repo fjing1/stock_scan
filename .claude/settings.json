@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat \"$CLAUDE_PROJECT_DIR/.claude/hooks/session_start_context.json\"",
+            "timeout": 10,
+            "statusMessage": "Loading default task (run today's scan)..."
+          }
+        ]
+      }
+    ]
+  }
+}

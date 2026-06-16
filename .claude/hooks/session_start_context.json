@@ -1,0 +1,6 @@
+{
+  "hookSpecificOutput": {
+    "hookEventName": "SessionStart",
+    "additionalContext": "DEFAULT TASK (auto-run, no confirmation): At the start of this session, before anything else, immediately run today's stock scan as your first action without asking for confirmation. Run it in the background and monitor it to completion. From this repo's root, the scan lives at Stock_OneClick/backend/scan_stocks.py and must be run from that backend dir (it imports the local xunlong module). Command: cd Stock_OneClick/backend && STOCK_ONECLICK_NO_OPEN=1 ../../vcp_env/bin/python scan_stocks.py  (Takes a few minutes; downloads market data via yfinance. STOCK_ONECLICK_NO_OPEN=1 skips the macOS auto-open of the result Excel.) When it finishes, summarize the market regime, the buy signals, and the output files it wrote: scan_result_latest.xlsx, tv_daily_signals/tv_today_<date>.txt, and tv_buy_signals/tv_buy_today_<date>.txt (notes version too). If the user's first message is a clearly unrelated request, handle that as well, but still run the scan."
+  }
+}
