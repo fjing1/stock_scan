@@ -61,6 +61,9 @@ against the trading literature.
 | 15 | Analyst-revision momentum (free, non-price)? | `revision_alpha.py` | ❌ orthogonal (corr≈0) but **negative** OOS — ratings lag price; adding it hurt |
 | 16 | Sector rotation — "sector A up → B next"? | `sector_rotation.py` | ❌ no clean lead-lag (weak & negative); momentum rotation ≈ market; real rotation is macro-regime-driven |
 | 17 | Macro risk-on/off regime timing (Yahoo proxies)? | `macro_regime.py` | ❌ no edge — regime doesn't predict returns; risk-off timing cuts maxDD but lowers Sharpe; cyc/def inverted (mean-reversion). Official FRED test pending restart |
+| 18 | Residual (factor-neutral) momentum — beats raw 12-1? | `residual_momentum.py` | ⚠️ in-sample crash-protection **replicates** (LS maxDD −65%→−22%, β≈0) but **no net OOS edge** — IR-form churns 78–163%; raw long-only wins OOS |
+| 19 | Post-earnings drift (PEAD) — orthogonal event alpha? | `pead_drift.py` | ✅ **real & OOS-persistent** — Q5−Q1 surprise drift +2.25%→**+3.05%** (63d, train→test); low-turnover (14%) overlay net Sharpe **0.27** OOS, β≈0 → the orthogonal leg to STACK on #12 |
+| 20 | Stack PEAD onto the #12 ensemble — does orthogonality pay? | `pead_stack.py` | ❌ **no reliable lift** — score-stack −0.05 test; 50/50 sleeve +0.15 test but −0.10 train; PEAD is period-concentrated (weak pre-2019). Keep 4-alpha+buffer |
 
 ### Key results
 
@@ -178,6 +181,62 @@ CHANGES, not the stronger EPS-estimate revisions. This settles the frontier: the
 orthogonal option is exhausted — real further alpha needs EPS-estimate revisions,
 point-in-time fundamentals, and a survivorship-free universe (not available via Yahoo).
 
+**Residual (factor-neutral) momentum — crash-protection replicates, net edge doesn't (18).**
+*Surfaced by the `research-ideas` agentic workflow as the #1 mature, replicated, NEW-to-repo
+edge.* Plain 12-1 momentum (the ensemble's #12 leg) carries factor/beta tilt that drives the
+notorious momentum crashes; residual momentum (Blitz–Huij–Martens 2011) regresses each name's
+daily returns on 3 factor proxies (market = SPY, size = IWM−SPY, value = IWD−IWF), ranks the
+**IR-scaled cumulative residual** (skip 1mo), and trades the top/bottom-quintile spread vs the
+RAW 12-1 baseline through an identical engine. **In-sample, the literature's headline benefit
+replicates cleanly:** the factor-neutral long-short halves drawdown (train maxDD raw −65% →
+residual −22%) and flips raw's ~zero train alpha positive (LS Sharpe −0.13 → +0.37), β≈0.
+**But out-of-sample (2019→, incl. 2022) the edge does not survive costs.** The IR-scaling
+re-ranks violently — turnover 78%/wk and a runaway 163%/mo — so net-of-cost LS Sharpe is
+0.15 (weekly) / −0.11 (monthly), and the long-only top-quintile alpha vs SPY is *lower* than
+raw momentum's OOS (+12.7% vs +20.8% weekly). Raw long-only momentum remains the stronger
+deployable signal on this survivorship-biased OHLCV universe. This **confirms #14's verdict**:
+the easy OHLCV cross-sectional alphas are exhausted — residual momentum's edge is real in-
+sample but gets decayed/churned away net. Open levers before shelving: a non-IR (plain
+cumulative-residual) score to cut churn, the #13 rebalance buffer, and a point-in-time
+universe. `python residual_momentum.py [--rebal 5|21] [--names N]`.
+
+**Post-earnings-announcement drift (PEAD) — the orthogonal alpha that holds up (19).**
+*Chosen as the follow-up to #18 because #14/#15 said the binding constraint is NEW data
+orthogonal to price.* PEAD is driven by the EARNINGS SURPRISE (a fundamental/event signal,
+not OHLCV). Realized analyst surprises ARE reachable via yfinance's earnings-dates endpoint
+with enough depth for OOS (AAPL to 2005; **10,856 surprise records across 135/136 names**;
+needs `lxml` + the `guce.yahoo.com`/`consent.yahoo.com` allowlist — see the apple sandbox CSV).
+**Event study (9,232 tradable events, entry the session AFTER the announce so it's tradable,
+drift detrended vs SPY):** the top-minus-bottom surprise-quintile drift is **+0.67% → +2.25%**
+over +21d → +63d in TRAIN and **+0.95% → +3.05%** in TEST — i.e. it ACCUMULATES over the
+quarter (as Bernard–Thomas predict) and STRENGTHENS out-of-sample; in test the miss-quintile
+(Q1) turns negative, the clean PEAD signature. **Tradable overlay** (a name is "in play" for
+63 trading days post-report, weekly long-top/short-bottom-surprise-quintile): long-short net
+Sharpe **0.05 train → 0.27 test**, β −0.01/+0.15, and crucially **turnover is only 14–16%**
+(quarterly events rotate slowly) — so costs barely dent it, the opposite of #18's churn. As a
+standalone long-short it's modest, but it is the **low-turnover, orthogonal, OOS-persistent**
+leg #14 said was missing. **Recommended next build: stack PEAD as a new alpha in the #12
+ensemble** (event-driven ⇒ ~uncorrelated to the price alphas) and/or tilt the dip-scanner
+toward names with a recent positive surprise. CAVEAT: survivorship inflates the long leg and
+analyst-surprise is weaker than SUE/estimate-revisions — treat magnitudes as a lower bound;
+trust the quintile monotonicity, OOS persistence, and β≈0. `python pead_drift.py [--names N]`.
+
+**Stacking PEAD onto the ensemble — orthogonality didn't reliably pay (20).** Added the #19
+PEAD leg to the validated 4-alpha blend under the #13 buffer config, two ways. The base
+reproduces ~0.5 net Sharpe (train 0.45 / test 0.53, β 0.03). PEAD's spread is only **+0.19**
+correlated to the 4-alpha spread — the diversifier #14 asked for — yet **neither combination
+lifts net Sharpe in BOTH windows**: (a) *score-stacking* (z-sum into one ranking) gives
+train +0.03 / **test −0.05** — a sparse signal just perturbs the ranking at the margin
+(echoes #14); (b) the correct *sleeve* combination (hold PEAD as its own book, blend net
+returns 50/50) gives **test 0.53→0.69 (+0.15)** but **train 0.45→0.35 (−0.10)**. The split is
+the lesson: PEAD's *tradable* net Sharpe is strong in test (0.53) but weak pre-2019 (0.05) —
+**period-concentrated**, so it can't raise the combined Sharpe across both windows even though
+the drift itself persists (#19). By the house rule (persist in train AND test), the **4-alpha
++ buffer remains the production config**; PEAD is better used as a **long-only tilt** in the
+dip-scanner (its test long-only alpha is +12%/yr at low turnover) than as an ensemble leg. The
+binding constraint is now clearly the survivorship universe + new-alpha period-concentration,
+not a shortage of orthogonal signals. `python pead_stack.py [--names N]`.
+
 ## 5. The resulting system
 
 ```
@@ -210,6 +269,9 @@ HOLD   : ~1–3 weeks
 - `entry_sweep.py` — broad entry-indicator library (32 variants, OOS)
 - `momentum_exit_sweep.py` — momentum entries × trend-following exits (beta check)
 - `market_neutral_ensemble.py` — cross-sectional long-short alpha ensemble
+- `residual_momentum.py` — residual (factor-neutral) vs raw 12-1 momentum (workflow-surfaced; in-sample only)
+- `pead_drift.py` — post-earnings-announcement-drift event study + tradable overlay (orthogonal event alpha; OOS-persistent)
+- `pead_stack.py` — stack PEAD onto the #12 ensemble (score-stack + 50/50 sleeve); no reliable both-window lift
 - `mn_turnover.py` — turnover-reduction pass (buffer/smoothing/frequency)
 - `alpha_stack.py` — multi-alpha stacking + sector-neutralization (8 alphas)
 - `revision_alpha.py` — analyst-revision-momentum (non-price) alpha test
@@ -251,10 +313,15 @@ HOLD   : ~1–3 weeks
   size by volatility — targets alpha directly and is the highest-value upgrade.
   *Status: built (#12), turnover-tuned (#13), alpha-stacking explored (#14).
   Recommended config = balanced 4-alpha + rebalance buffer (~0.5 net Sharpe, β≈0).*
-- **New orthogonal data** is now the binding constraint: OHLCV cross-sectional alphas
-  are exhausted (#14). Real Sharpe lift needs fundamentals / earnings & analyst
-  revisions / alt-data, plus a **point-in-time, survivorship-free universe** (CRSP /
-  Sharadar / Norgate) — neither available via Yahoo.
+- **New orthogonal data** is the binding constraint for OHLCV alphas (#14). **Update (#19/#20):
+  realized earnings surprises ARE reachable via Yahoo with OOS depth, and PEAD is a real,
+  OOS-persistent, low-turnover, orthogonal alpha — but stacking it onto the #12 ensemble did
+  NOT reliably lift net Sharpe in both windows (#20: PEAD is period-concentrated, strong post-
+  2019, weak before).** So the production config stays 4-alpha + buffer; PEAD is best deployed
+  as a long-only TILT in the dip-scanner (recent positive surprise), not as an ensemble leg.
+  Open: SUE/standardized surprise, and a point-in-time universe to retest #20 without the
+  period/survivorship confounds. Estimate *revisions* and PIT fundamentals remain unavailable
+  via Yahoo (#15).
 
 ## 9. Reproduce
 

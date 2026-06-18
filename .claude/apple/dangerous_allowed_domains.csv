@@ -5,6 +5,10 @@ fc.yahoo.com
 finance.yahoo.com
 query1.finance.yahoo.com
 query2.finance.yahoo.com
+# Yahoo consent/cookie-bootstrap hosts — yfinance redirects through these to obtain
+# the crumb/cookie needed for the earnings-dates HTML endpoint (PEAD study). Yahoo only.
+guce.yahoo.com
+consent.yahoo.com
 # FRED (St. Louis Fed) — free, KEYLESS macro data via fredgraph.csv. Added at user
 # request for macro-regime / sector-rotation research. Remove this line to revoke.
 fred.stlouisfed.org
