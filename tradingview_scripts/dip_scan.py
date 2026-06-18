@@ -133,16 +133,18 @@ def scan_symbol(sym, df, rsi_max, k_max, legacy_trend=False):
     }
 
 
-def confirm_15m(sym, window, body_mult, vol_mult, up_frac):
-    """Intraday turn confirmation: is there a strong up 15m candle on above-avg
-    volume within the last `window` bars?
+def confirm_intraday(sym, interval, window, body_mult, vol_mult, up_frac):
+    """Intraday turn confirmation: is there a strong up bar on above-avg volume within the last
+    `window` bars of the chosen intraday `interval` (15m/30m/60m)? (#23: 60m is the best-powered
+    timeframe, 15m is directionally supportive, 30m showed nothing.)
 
-    Strong up bar = close>open AND body >= body_mult x avg|body|(20) AND closes in
-    top (1-up_frac) of its range AND volume >= vol_mult x avg vol(20).
-    Returns dict with conf15 Y/N, the latest qualifying bar's up%, vol ratio, time.
+    Strong up bar = close>open AND body >= body_mult x avg|body|(20) AND closes in top
+    (1-up_frac) of its range AND volume >= vol_mult x avg vol(20).
+    Returns dict with conf Y/N, the latest qualifying bar's up%, vol ratio, time.
     """
+    period = "1mo" if interval == "60m" else "5d"
     try:
-        d = yf.download(sym, period="5d", interval="15m",
+        d = yf.download(sym, period=period, interval=interval,
                         auto_adjust=False, progress=False)
     except Exception:
         return None
@@ -160,12 +162,12 @@ def confirm_15m(sym, window, body_mult, vol_mult, up_frac):
               & (close_pos >= up_frac) & (v >= vol_mult * avg_vol)).fillna(False)
     recent = strong.iloc[-window:]
     if not recent.any():
-        return {"conf15": "N", "up15": np.nan, "volx": np.nan, "bar15": ""}
+        return {"conf": "N", "up": np.nan, "volx": np.nan, "bar": ""}
     idx = recent[recent].index[-1]                       # latest qualifying bar
     up = float((c.loc[idx] - o.loc[idx]) / o.loc[idx] * 100)
     volx = float(v.loc[idx] / avg_vol.loc[idx]) if avg_vol.loc[idx] else np.nan
-    return {"conf15": "Y", "up15": round(up, 2),
-            "volx": round(volx, 1), "bar15": str(idx)[5:16]}
+    return {"conf": "Y", "up": round(up, 2),
+            "volx": round(volx, 1), "bar": str(idx)[5:16]}
 
 
 def apply_pead_tilt(df):
@@ -206,11 +208,13 @@ def main(argv=None):
     ap.add_argument("--chunk", type=int, default=120)
     ap.add_argument("--limit", type=int, default=0, help="cap symbols (testing)")
     ap.add_argument("--no-confirm", action="store_true",
-                    help="skip the 15-minute strong-up-bar confirmation")
+                    help="skip the intraday strong-up-bar confirmation")
     ap.add_argument("--require-confirm", action="store_true",
-                    help="keep only hits with a 15m confirmation")
+                    help="keep only hits with an intraday confirmation")
+    ap.add_argument("--confirm-tf", choices=["15m", "30m", "60m"], default="15m",
+                    help="intraday confirmation timeframe (#23: 60m best-powered, 15m directional, 30m null)")
     ap.add_argument("--confirm-window", type=int, default=26,
-                    help="how many recent 15m bars to scan (26 ~= 1 session)")
+                    help="how many recent intraday bars to scan (26 ~= 1 session of 15m)")
     ap.add_argument("--body-mult", type=float, default=1.5,
                     help="strong-bar body vs 20-bar avg body")
     ap.add_argument("--vol-mult", type=float, default=1.5,
@@ -265,19 +269,19 @@ def main(argv=None):
 
     # ---- 15-minute strong-up-bar confirmation (intraday turn) ----
     if not args.no_confirm:
-        print(f"\nchecking 15m confirmation for {len(df)} hits ...", flush=True)
-        recs = [confirm_15m(s, args.confirm_window, args.body_mult,
-                            args.vol_mult, args.up_frac) for s in df["symbol"]]
-        df["conf15"] = [r["conf15"] if r else "n/a" for r in recs]
-        df["up15%"] = [r["up15"] if r else np.nan for r in recs]
+        print(f"\nchecking {args.confirm_tf} confirmation for {len(df)} hits ...", flush=True)
+        recs = [confirm_intraday(s, args.confirm_tf, args.confirm_window, args.body_mult,
+                                 args.vol_mult, args.up_frac) for s in df["symbol"]]
+        df["conf"] = [r["conf"] if r else "n/a" for r in recs]
+        df["up%"] = [r["up"] if r else np.nan for r in recs]
         df["volx"] = [r["volx"] if r else np.nan for r in recs]
-        df["bar15"] = [r["bar15"] if r else "" for r in recs]
+        df["bar"] = [r["bar"] if r else "" for r in recs]
         if args.require_confirm:
-            df = df[df["conf15"] == "Y"]
+            df = df[df["conf"] == "Y"]
             if df.empty:
-                print("no hits with 15m confirmation.")
+                print(f"no hits with {args.confirm_tf} confirmation.")
                 return
-        df["_c"] = (df["conf15"] != "Y").astype(int)   # confirmed first
+        df["_c"] = (df["conf"] != "Y").astype(int)   # confirmed first
     else:
         df["_c"] = 0
 
@@ -304,9 +308,9 @@ def main(argv=None):
     fresh = df[df["status"] == "FRESH_BUY"]
     show = fresh if len(fresh) else df[df["status"] == "ACTIVE"]
     title = "FRESH BUYS today" if len(fresh) else "ACTIVE setups (no fresh buys today)"
-    print(f"--- {title} (ranked by DipRank; 15m-confirmed first) ---")
+    print(f"--- {title} (ranked by DipRank; hi-conv & {args.confirm_tf}-confirmed first) ---")
     cols = ["symbol", "DipRank_PEAD", "DipRank", "hi_conv", "earn_surprise", "earn_age_d",
-            "conf15", "up15%", "volx", "bar15",
+            "conf", "up%", "volx", "bar",
             "close", "mom_12m", "vs_MA50", "pct_above_MA85", "pct_above_MA200", "rsi", "stochK"]
     cols = [c for c in cols if c in show.columns]
     print(show[cols].head(40).to_string(index=False) if len(show) else "  (none)")

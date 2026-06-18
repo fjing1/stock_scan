@@ -72,6 +72,7 @@ against the trading literature.
 | 20 | Stack PEAD onto the #12 ensemble — does orthogonality pay? | `pead_stack.py` | ❌ **no reliable lift** — score-stack −0.05 test; 50/50 sleeve +0.15 test but −0.10 train; PEAD is period-concentrated (weak pre-2019). Keep 4-alpha+buffer |
 | 21 | Is the static 2019 split right? Walk-forward + overfit haircuts | `walkforward.py` | ⚠️ rolling-origin OOS + DSR/PBO. Equal-weight robust (OOS ~0.37, recent-3y 0.73); adaptive weighting needs a ≥4–6mo window and **fails the haircut** (DSR 0.78, PBO 0.65) → config selection is overfit |
 | 22 | Is SMA200 the best trend filter? (1–200 sweep + fib/EMA) | `ma_filter_sweep.py`, `ma_length_curve.py` | ✅ **No — 200 is too long.** Edge peaks at the ~85d MA (OOS ~0.9%/trade vs 0.55% at 200) and the **50>200 regime-cross** (t 4.7, DSR 1.00); fib & EMA show no magic; dead-zone n≈10–55. Scanner filter → SMA50>SMA200 (+ Close>SMA85 hi-conv tier) |
+| 23 | Does a 15/30/60m intraday confirmation improve the daily entry? | `mtf_intraday_test.py` | ~ **weak/indicative** — 60m (2yr, n=1219): confirmed +0.29% vs unconfirmed −1.11% (Δ+1.4pp, t 2.2); 15m directional (70% vs 52% win, t 1.2, n 46); 30m null. A timing overlay (`dip_scan --confirm-tf`), not a proven edge |
 
 ### Key results
 
@@ -286,6 +287,23 @@ ranking de-prioritizes weak ones), with `Close>SMA85` surfaced as a `hi_conv` ti
 sweet spot). `--legacy-trend` restores `Close>SMA200`. `python ma_filter_sweep.py` /
 `python ma_length_curve.py`.
 
+**Multi-timeframe intraday confirmation — weak-but-real on 60m, data-walled on 15/30m (23).**
+Re-opened the question "use 15/30m for better entries" with the current daily signal. Among
+daily dip signals, split by whether the NEXT session shows an intraday strong-up bar (the
+dip_scan conf rule) and compared the daily +10d detrended forward return of confirmed vs
+unconfirmed. Result depends entirely on the timeframe's available history: **60m has ~2 yrs
+(n=1,219) and shows a mild, marginally-significant lift** — confirmed +0.29% vs unconfirmed
+**−1.11%** (Δ +1.4pp, t **2.2**, win 50% vs 44%); the value is mostly in AVOIDING the
+unconfirmed dips ("nobody bought it intraday → it keeps bleeding"). **15m is only 60 days
+(n=46)**: directionally strong (70% vs 52% win, +5.1% vs +1.5%) but t **1.2** — i.e. exactly
+#8's weak/unproven situation. **30m is null** (t −0.1). Caveats: 3 timeframes tested (multiple-
+testing would haircut the 60m t≈2.2 toward marginal), single ~2yr regime, survivorship. EXIT
+is unchanged from #9 (a 15m sell-bar exit was harmful; a proper intraday-exit test is blocked
+by the 60-day data wall for the ~2-week hold). **Verdict:** intraday confirmation is a sensible
+LIVE timing overlay, not a proven backtested edge — deployed in `dip_scan.py` as
+`--confirm-tf 15m|30m|60m` (60m is the best-powered choice; confirmed hits sort first).
+`python mtf_intraday_test.py [--names N]`.
+
 ## 5. The resulting system
 
 ```
@@ -294,7 +312,8 @@ ENTRY  : SMA50 > SMA200 (up-regime, #22)  AND  RSI(14) < 40  AND  Stoch %K(10,EM
 RANK   : DipRank = 0.45·(12m return) + 0.30·(pullback below MA50) + 0.25·(% above MA200)
 TILT   : DipRank_PEAD = DipRank ± up to 12 pts by recent earnings-surprise percentile
          (#19/#20 long-only PEAD tilt; in-play = reported within ~63 trading days)
-CONFIRM: optional — a strong up 15m candle on >=1.5x avg volume that session
+CONFIRM: optional — a strong up intraday candle on >=1.5x avg volume next session
+         (#23, --confirm-tf 15m/30m/60m; 60m best-powered, weak/indicative edge)
 EXIT   : close >= SMA20  (or Stoch %K >= 70, or RSI(2) >= 70)   — sell into strength
 STOP   : none tight (they hurt); >MA200 is the risk control. Optional wide disaster stop.
 HOLD   : ~1–3 weeks
@@ -305,8 +324,9 @@ HOLD   : ~1–3 weeks
   `dip_in_uptrend_strategy.pine` (Strategy Tester: win rate / profit factor / equity, with
   optional hi-conv and earnings-beat entry filters). `--legacy` Close>SMA200 selectable in both.
 - Scanner: `dip_scan.py` → ranked dated CSV in `results/<YYYYMMDD>/`. Ranks by `DipRank_PEAD`
-  (DipRank with the #19/#20 earnings-surprise tilt; `--no-pead` to disable) and reports each
-  hit's recent `earn_surprise` / `earn_age_d`.
+  (DipRank with the #19/#20 earnings-surprise tilt; `--no-pead` to disable), surfaces a `hi_conv`
+  tier (#22) and an optional intraday confirmation (`--confirm-tf 15m/30m/60m`, #23), and reports
+  each hit's recent `earn_surprise` / `earn_age_d`.
 - Sector overlay: `sector_confirm.py` → given a stock, scores its industry's trend
   (sector SPDR + thematic ETF + peer breadth) so a dip-buy is only high-conviction
   when the whole industry is healthy. Verdict tiers: STRONG / CONSTRUCTIVE (uptrend
@@ -331,6 +351,7 @@ HOLD   : ~1–3 weeks
 - `walkforward.py` — rolling-origin walk-forward + Deflated-Sharpe & PBO/CSCV overfit haircuts (the #21 verdict harness)
 - `ma_filter_sweep.py` — trend-filter comparison (lengths, types, stacks, fib, EMA) for #22
 - `ma_length_curve.py` — exhaustive 1..200 MA-length edge curve (SMA & EMA) for #22
+- `mtf_intraday_test.py` — multi-timeframe (15/30/60m) intraday entry-confirmation test for #23
 - `mn_turnover.py` — turnover-reduction pass (buffer/smoothing/frequency)
 - `alpha_stack.py` — multi-alpha stacking + sector-neutralization (8 alphas)
 - `revision_alpha.py` — analyst-revision-momentum (non-price) alpha test
