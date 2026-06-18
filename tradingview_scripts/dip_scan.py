@@ -28,8 +28,12 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from cycle_patter_for_swing import compute_cycle_stoch  # noqa: E402
+from pead_drift import load_earnings  # noqa: E402
 
 import yfinance as yf  # noqa: E402
+
+PEAD_WINDOW_DAYS = 95   # ~63 trading days a name stays "in play" after an earnings report
+PEAD_MAX_TILT = 12      # max +/- DipRank points contributed by the earnings-surprise tilt
 
 
 def load_universe(which):
@@ -149,6 +153,36 @@ def confirm_15m(sym, window, body_mult, vol_mult, up_frac):
             "volx": round(volx, 1), "bar15": str(idx)[5:16]}
 
 
+def apply_pead_tilt(df):
+    """Long-only PEAD tilt (RESEARCH.md #19/#20): nudge DipRank by a name's most recent
+    earnings surprise. A name is "in play" if it reported within PEAD_WINDOW_DAYS; its
+    surprise percentile (among in-play hits) maps to +/-PEAD_MAX_TILT DipRank points, and
+    out-of-play names are neutral (0). PEAD as a long-only tilt is the deployable use found
+    in #20 (it did NOT reliably lift the market-neutral ensemble, but it is a real,
+    orthogonal, OOS-persistent long-side effect). Earnings are fetched ONLY for the hits
+    (fast) and reuse the cached surprises. Adds earn_surprise, earn_age_d, DipRank_PEAD."""
+    earn = load_earnings(list(df["symbol"]), use_cache=True)
+    surp, age = [], []
+    for sym, dstr in zip(df["symbol"], df["date"]):
+        today = pd.Timestamp(dstr)
+        best = None
+        for ds, sp in earn.get(sym, []):
+            a = (today - pd.Timestamp(ds)).days
+            if 0 <= a <= PEAD_WINDOW_DAYS and (best is None or a < best[0]):
+                best = (a, sp)
+        age.append(best[0] if best else np.nan)
+        surp.append(round(best[1], 1) if best else np.nan)
+    df["earn_surprise"] = surp
+    df["earn_age_d"] = age
+    inplay = df["earn_surprise"].notna()
+    tilt = pd.Series(0.0, index=df.index)
+    if inplay.sum() >= 3:
+        pr = df.loc[inplay, "earn_surprise"].rank(pct=True)
+        tilt.loc[inplay] = (pr - 0.5) * 2 * PEAD_MAX_TILT
+    df["DipRank_PEAD"] = (df["DipRank"] + tilt).clip(0, 100).round().astype(int)
+    return df
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--universe", choices=["stocks", "etfs", "all"], default="all")
@@ -168,6 +202,8 @@ def main(argv=None):
                     help="bar volume vs 20-bar avg volume")
     ap.add_argument("--up-frac", type=float, default=0.6,
                     help="min close position in bar range (0.6 = upper 40%)")
+    ap.add_argument("--no-pead", action="store_true",
+                    help="skip the PEAD earnings-surprise tilt on DipRank")
     args = ap.parse_args(argv)
 
     syms = load_universe(args.universe)
@@ -203,6 +239,12 @@ def main(argv=None):
     p_tr = df["pct_above_MA200"].rank(pct=True)
     df["DipRank"] = (100 * (0.45 * p_mom + 0.30 * p_pb + 0.25 * p_tr)).round().astype(int)
 
+    # ---- PEAD long-only tilt (#19/#20): nudge DipRank by recent earnings surprise ----
+    if not args.no_pead:
+        print(f"\napplying PEAD earnings-surprise tilt to {len(df)} hits ...", flush=True)
+        df = apply_pead_tilt(df)
+    rank_col = "DipRank_PEAD" if "DipRank_PEAD" in df.columns else "DipRank"
+
     # ---- 15-minute strong-up-bar confirmation (intraday turn) ----
     if not args.no_confirm:
         print(f"\nchecking 15m confirmation for {len(df)} hits ...", flush=True)
@@ -223,7 +265,7 @@ def main(argv=None):
 
     order = {"FRESH_BUY": 0, "ACTIVE": 1, "WATCH": 2}
     df["_o"] = df["status"].map(order)
-    df = df.sort_values(["_o", "_c", "DipRank"],
+    df = df.sort_values(["_o", "_c", rank_col],
                         ascending=[True, True, False]).drop(columns=["_o", "_c"])
 
     # save dated CSV under results/
@@ -244,7 +286,8 @@ def main(argv=None):
     show = fresh if len(fresh) else df[df["status"] == "ACTIVE"]
     title = "FRESH BUYS today" if len(fresh) else "ACTIVE setups (no fresh buys today)"
     print(f"--- {title} (ranked by DipRank; 15m-confirmed first) ---")
-    cols = ["symbol", "DipRank", "conf15", "up15%", "volx", "bar15",
+    cols = ["symbol", "DipRank_PEAD", "DipRank", "earn_surprise", "earn_age_d",
+            "conf15", "up15%", "volx", "bar15",
             "close", "mom_12m", "vs_MA50", "pct_above_MA200", "rsi", "stochK"]
     cols = [c for c in cols if c in show.columns]
     print(show[cols].head(40).to_string(index=False) if len(show) else "  (none)")

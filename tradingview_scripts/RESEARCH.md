@@ -39,6 +39,12 @@ against the trading literature.
   tight exit can give 90% wins yet make no money).
 - **Honesty about multiplicity:** searching N combos guarantees in-sample winners;
   only OOS persistence + economic coherence counts. Sample sizes and z-scores reported.
+- **Walk-forward verdict (adopted #21):** the single 2019 split is a useful first screen but
+  fragile, so cross-sectional results are now also judged by rolling-origin walk-forward (refit
+  on a trailing window with a 1-week embargo, stitch all test windows into one OOS curve), a
+  **recent-3y** readout (regimes change — 2007–18's market/players/tech ≠ now), and overfit
+  haircuts: **Deflated Sharpe** (discount for the N configs tried) + **PBO/CSCV** (is the
+  in-sample-best config overfit). A result must clear the haircut, not just one cut's OOS.
 
 ## 4. Experiments & findings
 
@@ -64,6 +70,7 @@ against the trading literature.
 | 18 | Residual (factor-neutral) momentum — beats raw 12-1? | `residual_momentum.py` | ⚠️ in-sample crash-protection **replicates** (LS maxDD −65%→−22%, β≈0) but **no net OOS edge** — IR-form churns 78–163%; raw long-only wins OOS |
 | 19 | Post-earnings drift (PEAD) — orthogonal event alpha? | `pead_drift.py` | ✅ **real & OOS-persistent** — Q5−Q1 surprise drift +2.25%→**+3.05%** (63d, train→test); low-turnover (14%) overlay net Sharpe **0.27** OOS, β≈0 → the orthogonal leg to STACK on #12 |
 | 20 | Stack PEAD onto the #12 ensemble — does orthogonality pay? | `pead_stack.py` | ❌ **no reliable lift** — score-stack −0.05 test; 50/50 sleeve +0.15 test but −0.10 train; PEAD is period-concentrated (weak pre-2019). Keep 4-alpha+buffer |
+| 21 | Is the static 2019 split right? Walk-forward + overfit haircuts | `walkforward.py` | ⚠️ rolling-origin OOS + DSR/PBO. Equal-weight robust (OOS ~0.37, recent-3y 0.73); adaptive weighting needs a ≥4–6mo window and **fails the haircut** (DSR 0.78, PBO 0.65) → config selection is overfit |
 
 ### Key results
 
@@ -237,11 +244,33 @@ dip-scanner (its test long-only alpha is +12%/yr at low turnover) than as an ens
 binding constraint is now clearly the survivorship universe + new-alpha period-concentration,
 not a shortage of orthogonal signals. `python pead_stack.py [--names N]`.
 
+**Walk-forward beats the static split — and the haircuts kill the "adaptive" edge (21).**
+The single 2019 split is fragile (arbitrary cut; lumps very different regimes into one "test")
+and 2007–18 may not represent how the market trades now. Replaced it with rolling-origin
+walk-forward: each step refit sleeve weights on a trailing window (1-week embargo so the 5-day
+forward label can't leak), hold over the next window, and STITCH every test window into one
+full-power OOS curve. Two things fell out. (a) **Window length matters and short is bad:** a
+4-week train window *breaks* adaptive weighting (OOS Sharpe −0.08 vs +0.37 equal — refitting on
+~4 returns just chases last month's winner); adaptive (trailing-Sharpe / max-Sharpe) only beats
+equal once the window is ≥17–26 weeks (4–6mo). **Equal-weight is robust everywhere** (0.29–0.41)
+because it estimates nothing. (b) **The recent regime really is better:** recent-3y Sharpe is
+0.73 (equal), up to ~1.0–1.4 (adaptive at the right window) vs the full-history 0.37 — a single
+2019 split buries this. BUT the rigor haircuts settle it: over the **N=18 configs tried**, the
+best config's **Deflated Sharpe is 0.78** (< 0.95 → NOT significant once you account for the
+search) and **PBO (CSCV, 924 combos) is 0.65** (HIGH — the in-sample-best config lands below the
+OOS median two-thirds of the time). **Verdict:** only *static equal-weight* (no fitting, no
+selection) survives the haircut; adaptive weighting and window-picking are overfit on this
+survivorship universe — which reinforces #14. The recent strength is real but **regime-driven,
+not from clever weighting**. Adopt walk-forward + a recent-window readout + DSR/PBO as the
+verdict mechanism going forward (see §3). `python walkforward.py [--names N]`.
+
 ## 5. The resulting system
 
 ```
 ENTRY  : Close > SMA200  AND  RSI(14) < 40  AND  Stoch %K(10,EMA4) < 20   (daily)
 RANK   : DipRank = 0.45·(12m return) + 0.30·(pullback below MA50) + 0.25·(% above MA200)
+TILT   : DipRank_PEAD = DipRank ± up to 12 pts by recent earnings-surprise percentile
+         (#19/#20 long-only PEAD tilt; in-play = reported within ~63 trading days)
 CONFIRM: optional — a strong up 15m candle on >=1.5x avg volume that session
 EXIT   : close >= SMA20  (or Stoch %K >= 70, or RSI(2) >= 70)   — sell into strength
 STOP   : none tight (they hurt); >MA200 is the risk control. Optional wide disaster stop.
@@ -250,7 +279,9 @@ HOLD   : ~1–3 weeks
 
 - TradingView: `dip_in_uptrend.pine` (indicator, BUY/SELL markers + status table),
   `dip_in_uptrend_strategy.pine` (Strategy Tester: win rate / profit factor / equity).
-- Scanner: `dip_scan.py` → ranked dated CSV in `results/<YYYYMMDD>/`.
+- Scanner: `dip_scan.py` → ranked dated CSV in `results/<YYYYMMDD>/`. Ranks by `DipRank_PEAD`
+  (DipRank with the #19/#20 earnings-surprise tilt; `--no-pead` to disable) and reports each
+  hit's recent `earn_surprise` / `earn_age_d`.
 - Sector overlay: `sector_confirm.py` → given a stock, scores its industry's trend
   (sector SPDR + thematic ETF + peer breadth) so a dip-buy is only high-conviction
   when the whole industry is healthy. Verdict tiers: STRONG / CONSTRUCTIVE (uptrend
@@ -272,6 +303,7 @@ HOLD   : ~1–3 weeks
 - `residual_momentum.py` — residual (factor-neutral) vs raw 12-1 momentum (workflow-surfaced; in-sample only)
 - `pead_drift.py` — post-earnings-announcement-drift event study + tradable overlay (orthogonal event alpha; OOS-persistent)
 - `pead_stack.py` — stack PEAD onto the #12 ensemble (score-stack + 50/50 sleeve); no reliable both-window lift
+- `walkforward.py` — rolling-origin walk-forward + Deflated-Sharpe & PBO/CSCV overfit haircuts (the #21 verdict harness)
 - `mn_turnover.py` — turnover-reduction pass (buffer/smoothing/frequency)
 - `alpha_stack.py` — multi-alpha stacking + sector-neutralization (8 alphas)
 - `revision_alpha.py` — analyst-revision-momentum (non-price) alpha test
