@@ -71,6 +71,7 @@ against the trading literature.
 | 19 | Post-earnings drift (PEAD) — orthogonal event alpha? | `pead_drift.py` | ✅ **real & OOS-persistent** — Q5−Q1 surprise drift +2.25%→**+3.05%** (63d, train→test); low-turnover (14%) overlay net Sharpe **0.27** OOS, β≈0 → the orthogonal leg to STACK on #12 |
 | 20 | Stack PEAD onto the #12 ensemble — does orthogonality pay? | `pead_stack.py` | ❌ **no reliable lift** — score-stack −0.05 test; 50/50 sleeve +0.15 test but −0.10 train; PEAD is period-concentrated (weak pre-2019). Keep 4-alpha+buffer |
 | 21 | Is the static 2019 split right? Walk-forward + overfit haircuts | `walkforward.py` | ⚠️ rolling-origin OOS + DSR/PBO. Equal-weight robust (OOS ~0.37, recent-3y 0.73); adaptive weighting needs a ≥4–6mo window and **fails the haircut** (DSR 0.78, PBO 0.65) → config selection is overfit |
+| 22 | Is SMA200 the best trend filter? (1–200 sweep + fib/EMA) | `ma_filter_sweep.py`, `ma_length_curve.py` | ✅ **No — 200 is too long.** Edge peaks at the ~85d MA (OOS ~0.9%/trade vs 0.55% at 200) and the **50>200 regime-cross** (t 4.7, DSR 1.00); fib & EMA show no magic; dead-zone n≈10–55. Scanner filter → SMA50>SMA200 (+ Close>SMA85 hi-conv tier) |
 
 ### Key results
 
@@ -264,10 +265,32 @@ survivorship universe — which reinforces #14. The recent strength is real but 
 not from clever weighting**. Adopt walk-forward + a recent-window readout + DSR/PBO as the
 verdict mechanism going forward (see §3). `python walkforward.py [--names N]`.
 
+**Is SMA200 the best trend filter? No — it's too long; the edge is a regime, not a number (22).**
+#4 used Close>SMA200; this stress-tested it by holding the oversold entry + 10d exit fixed and
+varying ONLY the trend filter. Three passes: (a) a discrete sweep of lengths/types/stacks; (b)
+Fibonacci lengths + EMA; (c) an exhaustive 1..200 length curve (SMA & EMA). Findings, all
+detrended-vs-SPY, OOS 2019+: **(1) the regime-CROSS shape wins** — `SMA50>SMA200` (golden cross)
+is the most robust filter (OOS +0.67%/trade, t **4.7**, 2,893 signals, **DSR 1.00**, barely
+degrades train→test) and beats `Close>SMA200` (+0.55%, t 3.0, *halves* train→test). **(2)
+Fibonacci is not special** — the fib golden cross `SMA89>SMA233` (+0.62) ties the round
+`SMA50>SMA200`, and fib price-above filters land on the same curve as nearby round numbers.
+**(3) EMA is a wash** — EMA variants score within noise of SMA. **(4) The length curve is a
+broad hump:** a *dead zone* at n≈10–55 (you can't be deeply oversold AND above a short MA — ~0
+signals), a peak at **n≈75–100** (Close>SMA~85 gives the highest per-trade edge, ~+0.9%/trade vs
++0.55% at 200, and is *more* stable train→test), then a gentle fade to 200. **(5) Rigor:** the
+single best length has **DSR 0.89** (not uniquely significant) — read it as a *band* (~80–100),
+not a magic number; the "winner" C>SMA55 (+1.5% OOS) was a 119-trade fluke (negative in train)
+that the persistence+DSR guard correctly discarded. **Deployed (dip_scan.py):** the gate is now
+the robust `SMA50>SMA200` regime cross (catches good dips that briefly pierce the 200-day; the
+ranking de-prioritizes weak ones), with `Close>SMA85` surfaced as a `hi_conv` tier (the per-trade
+sweet spot). `--legacy-trend` restores `Close>SMA200`. `python ma_filter_sweep.py` /
+`python ma_length_curve.py`.
+
 ## 5. The resulting system
 
 ```
-ENTRY  : Close > SMA200  AND  RSI(14) < 40  AND  Stoch %K(10,EMA4) < 20   (daily)
+ENTRY  : SMA50 > SMA200 (up-regime, #22)  AND  RSI(14) < 40  AND  Stoch %K(10,EMA4) < 20  (daily)
+         hi_conv tier = also Close > SMA85 (the ~85-day per-trade-edge peak); --legacy-trend = Close>SMA200
 RANK   : DipRank = 0.45·(12m return) + 0.30·(pullback below MA50) + 0.25·(% above MA200)
 TILT   : DipRank_PEAD = DipRank ± up to 12 pts by recent earnings-surprise percentile
          (#19/#20 long-only PEAD tilt; in-play = reported within ~63 trading days)
@@ -304,6 +327,8 @@ HOLD   : ~1–3 weeks
 - `pead_drift.py` — post-earnings-announcement-drift event study + tradable overlay (orthogonal event alpha; OOS-persistent)
 - `pead_stack.py` — stack PEAD onto the #12 ensemble (score-stack + 50/50 sleeve); no reliable both-window lift
 - `walkforward.py` — rolling-origin walk-forward + Deflated-Sharpe & PBO/CSCV overfit haircuts (the #21 verdict harness)
+- `ma_filter_sweep.py` — trend-filter comparison (lengths, types, stacks, fib, EMA) for #22
+- `ma_length_curve.py` — exhaustive 1..200 MA-length edge curve (SMA & EMA) for #22
 - `mn_turnover.py` — turnover-reduction pass (buffer/smoothing/frequency)
 - `alpha_stack.py` — multi-alpha stacking + sector-neutralization (8 alphas)
 - `revision_alpha.py` — analyst-revision-momentum (non-price) alpha test
@@ -317,7 +342,8 @@ HOLD   : ~1–3 weeks
 
 **Deliverables**
 - `dip_in_uptrend.pine`, `dip_in_uptrend_strategy.pine` — TradingView
-- `dip_scan.py` — universe scanner with DipRank + 15m confirmation
+- `dip_scan.py` — universe scanner: #22 regime filter (SMA50>SMA200, +SMA85 hi-conv) + DipRank + PEAD tilt + 15m confirm
+- `position_advisor.py` — per-holding HOLD/TRIM/SELL read for one ticker (trend + swing + PEAD + sector)
 - `sector_confirm.py` — top-down sector/industry trend confirmation overlay
 
 ## 7. Limitations

@@ -3,7 +3,13 @@
 Applies the validated rule to the latest daily bar of every symbol in
 stock_symbols_1243.py:
 
-    Entry = Close > SMA200  AND  RSI(14) < 40  AND  Stoch %K(10,EMA4) < 20
+    Entry  = SMA50 > SMA200 (up-regime)  AND  RSI(14) < 40  AND  Stoch %K(10,EMA4) < 20
+    hi_conv = the above PLUS Close > SMA85  (the ~85-day MA is the per-trade-edge sweet spot)
+
+The trend filter is the #22 upgrade (ma_filter_sweep.py / ma_length_curve.py): the up-regime
+golden cross (SMA50>SMA200) is the most robust filter (highest OOS t-stat, most signals,
+DSR=1.00) and beats the original Close>SMA200; the ~85-day MA marks the highest per-trade
+edge, surfaced as the `hi_conv` tier. `--legacy-trend` restores the original Close>SMA200.
 
 Reports:
     FRESH BUY    -- signal true today and NOT true yesterday (actionable now)
@@ -14,6 +20,7 @@ Writes a dated CSV to results/<YYYYMMDD>/ and prints the fresh-buy list.
 
     python dip_scan.py                 # full universe (stocks + ETFs)
     python dip_scan.py --universe etfs
+    python dip_scan.py --legacy-trend  # revert to Close>SMA200
     python dip_scan.py --limit 100     # quick test
 """
 from __future__ import annotations
@@ -71,7 +78,7 @@ def fetch_chunk(symbols, period="2y", interval="1d"):
     return out
 
 
-def scan_symbol(sym, df, rsi_max, k_max):
+def scan_symbol(sym, df, rsi_max, k_max, legacy_trend=False):
     if df is None or len(df) < 260:           # need SMA200 + 12m momentum + warmup
         return None
     if not {"High", "Low", "Close"}.issubset(df.columns):
@@ -83,10 +90,15 @@ def scan_symbol(sym, df, rsi_max, k_max):
     close = df["Close"].astype(float)
     sma200 = close.rolling(200).mean()
     ma50 = close.rolling(50).mean()
+    ma85 = close.rolling(85).mean()
     if pd.isna(sma200.iloc[-1]) or pd.isna(cs["rsi"].iloc[-1]):
         return None
 
-    trend = close > sma200
+    # Trend filter (#22, ma_filter_sweep.py / ma_length_curve.py): the up-regime golden cross
+    # SMA50>SMA200 is the most robust filter (highest OOS t, most signals, DSR=1.00) and beats
+    # the legacy Close>SMA200. The ~85-day MA (highest per-trade edge) is surfaced as hi_conv,
+    # not a hard gate. --legacy-trend reverts to Close>SMA200.
+    trend = (close > sma200) if legacy_trend else (ma50 > sma200)
     oversold = (cs["rsi"] < rsi_max) & (cs["stoch_k"] < k_max)
     signal = (trend & oversold).fillna(False)
 
@@ -97,6 +109,8 @@ def scan_symbol(sym, df, rsi_max, k_max):
     cyc0 = float(cs["cycle"].iloc[-1])
     c0 = float(close.iloc[-1])
     pct_ma = (c0 / float(sma200.iloc[-1]) - 1.0) * 100.0
+    pct_ma85 = (c0 / float(ma85.iloc[-1]) - 1.0) * 100.0 if not pd.isna(ma85.iloc[-1]) else 0.0
+    hi_conv = "Y" if (not pd.isna(ma85.iloc[-1]) and c0 > float(ma85.iloc[-1])) else "N"
     trend_now = bool(trend.iloc[-1])
     # ranking features (validated in rank_test.py)
     mom12m = (c0 / float(close.iloc[-253]) - 1.0) * 100.0
@@ -113,7 +127,8 @@ def scan_symbol(sym, df, rsi_max, k_max):
     return {
         "symbol": sym, "status": status, "date": df.index[-1].date().isoformat(),
         "close": round(c0, 2), "rsi": round(rsi0, 1), "stochK": round(k0, 1),
-        "cycle": round(cyc0, 1), "pct_above_MA200": round(pct_ma, 1),
+        "cycle": round(cyc0, 1), "hi_conv": hi_conv, "pct_above_MA85": round(pct_ma85, 1),
+        "pct_above_MA200": round(pct_ma, 1),
         "mom_12m": round(mom12m, 1), "vs_MA50": round(vs_ma50, 1),
     }
 
@@ -204,20 +219,23 @@ def main(argv=None):
                     help="min close position in bar range (0.6 = upper 40%)")
     ap.add_argument("--no-pead", action="store_true",
                     help="skip the PEAD earnings-surprise tilt on DipRank")
+    ap.add_argument("--legacy-trend", action="store_true",
+                    help="use the original Close>SMA200 filter instead of the #22 SMA50>SMA200 & Close>SMA85")
     args = ap.parse_args(argv)
 
     syms = load_universe(args.universe)
     if args.limit:
         syms = syms[: args.limit]
+    trend_desc = ">SMA200 (legacy)" if args.legacy_trend else "SMA50>SMA200 (regime, #22)"
     print(f"scanning {len(syms)} symbols (daily, dip-in-uptrend: "
-          f"RSI<{args.rsi_max:.0f} & %K<{args.k_max:.0f} & >SMA200) ...", flush=True)
+          f"RSI<{args.rsi_max:.0f} & %K<{args.k_max:.0f} & {trend_desc}) ...", flush=True)
 
     rows, scanned, report_date = [], 0, None
     for i in range(0, len(syms), args.chunk):
         chunk = syms[i: i + args.chunk]
         data = fetch_chunk(chunk)
         for s in chunk:
-            r = scan_symbol(s, data.get(s), args.rsi_max, args.k_max)
+            r = scan_symbol(s, data.get(s), args.rsi_max, args.k_max, args.legacy_trend)
             scanned += 1
             if r:
                 rows.append(r)
@@ -265,8 +283,9 @@ def main(argv=None):
 
     order = {"FRESH_BUY": 0, "ACTIVE": 1, "WATCH": 2}
     df["_o"] = df["status"].map(order)
-    df = df.sort_values(["_o", "_c", rank_col],
-                        ascending=[True, True, False]).drop(columns=["_o", "_c"])
+    df["_h"] = (df["hi_conv"] != "Y").astype(int) if "hi_conv" in df.columns else 0
+    df = df.sort_values(["_o", "_h", "_c", rank_col],
+                        ascending=[True, True, True, False]).drop(columns=["_o", "_h", "_c"])
 
     # save dated CSV under results/
     rd = (report_date or "latest").replace("-", "")
@@ -286,9 +305,9 @@ def main(argv=None):
     show = fresh if len(fresh) else df[df["status"] == "ACTIVE"]
     title = "FRESH BUYS today" if len(fresh) else "ACTIVE setups (no fresh buys today)"
     print(f"--- {title} (ranked by DipRank; 15m-confirmed first) ---")
-    cols = ["symbol", "DipRank_PEAD", "DipRank", "earn_surprise", "earn_age_d",
+    cols = ["symbol", "DipRank_PEAD", "DipRank", "hi_conv", "earn_surprise", "earn_age_d",
             "conf15", "up15%", "volx", "bar15",
-            "close", "mom_12m", "vs_MA50", "pct_above_MA200", "rsi", "stochK"]
+            "close", "mom_12m", "vs_MA50", "pct_above_MA85", "pct_above_MA200", "rsi", "stochK"]
     cols = [c for c in cols if c in show.columns]
     print(show[cols].head(40).to_string(index=False) if len(show) else "  (none)")
 
