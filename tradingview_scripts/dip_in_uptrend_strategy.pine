@@ -1,13 +1,16 @@
 // Dip-in-Uptrend STRATEGY — runnable in TradingView's Strategy Tester.
 // Same entry/exit as the indicator; lets you see win rate / profit factor / P&L.
+// Upgraded with research #22 (trend filter) + #19/#20 (PEAD), RESEARCH.md.
 //
-// ENTRY : Close > SMA200  AND  RSI(14) < 40  AND  Stoch %K(10,EMA4) < 20
+// ENTRY : SMA50 > SMA200 (up-regime, #22)  AND  RSI(14) < 40  AND  Stoch %K(10,EMA4) < 20
+//         optional tiers: require Close>SMA85 (hi-conv) and/or a recent earnings BEAT (PEAD).
+//         --legacy filter (Close > SMA200) selectable.
 // EXIT  : Close >= SMA20  (default; sell back at the mean — best exit in testing).
-//         Options: Stoch %K>=70, RSI(2)>=70, RSI(14)>=50, SMA200 break, time.
 //
-// Out-of-sample reference (2019-2026, 30-name daily basket): SMA20 exit ~74% win,
-// PF ~2.2; %K>=70 ~71% win, PF ~2.0. Strategy Tester runs ONE symbol at a time;
-// pooled multi-name results are smoother. Tight/trailing stops degrade this setup.
+// OOS reference (2019-2026, 30-name daily basket): SMA20 exit ~74% win, PF ~2.2.
+// #22: SMA50>SMA200 regime beats Close>SMA200 (per-trade edge ~0.9% peaks at the ~85d MA).
+// Strategy Tester runs ONE symbol at a time; pooled multi-name results are smoother.
+// Tight/trailing stops degrade this mean-reversion setup. Earnings filters need a DAILY chart.
 
 //@version=6
 strategy("Dip-in-Uptrend Strategy", shorttitle="DipUptrend ST", overlay=true,
@@ -17,32 +20,47 @@ strategy("Dip-in-Uptrend Strategy", shorttitle="DipUptrend ST", overlay=true,
      pyramiding=0, process_orders_on_close=true)
 
 // ----------------------------- Inputs ----------------------------- //
-maLen     = input.int(200, "Trend SMA length", minval=1, group="Trend Filter")
-useRSI    = input.bool(true,  "Require RSI oversold", group="Oversold Entry")
-rsiLen    = input.int(14, "RSI length", minval=1, group="Oversold Entry")
-rsiThresh = input.float(40, "RSI < ", step=1, group="Oversold Entry")
-useK      = input.bool(true,  "Require Stoch %K oversold", group="Oversold Entry")
-kLen      = input.int(10, "Stoch %K length", minval=1, group="Oversold Entry")
-kSmooth   = input.int(4,  "Stoch %K EMA smooth", minval=1, group="Oversold Entry")
-kThresh   = input.float(20, "Stoch %K < ", step=1, group="Oversold Entry")
-useCycle  = input.bool(false, "Require Cycle oversold", group="Oversold Entry")
-cycThresh = input.float(20, "Cycle < ", step=1, group="Oversold Entry")
+gTrend    = "Trend Filter (#22)"
+trendMode = input.string("Regime: SMA50>SMA200 (#22)", "Trend filter",
+     options=["Regime: SMA50>SMA200 (#22)", "Legacy: Close>SMA200"], group=gTrend)
+fastLen   = input.int(50,  "Regime fast SMA", minval=1, group=gTrend)
+slowLen   = input.int(200, "Regime slow SMA / legacy trend SMA", minval=1, group=gTrend)
+hiLen     = input.int(85,  "Hi-conviction SMA", minval=1, group=gTrend)
+reqHiConv = input.bool(false, "Require hi-conv (Close>SMA85) to enter", group=gTrend)
 
+gOS = "Oversold Entry"
+useRSI    = input.bool(true,  "Require RSI oversold", group=gOS)
+rsiLen    = input.int(14, "RSI length", minval=1, group=gOS)
+rsiThresh = input.float(40, "RSI < ", step=1, group=gOS)
+useK      = input.bool(true,  "Require Stoch %K oversold", group=gOS)
+kLen      = input.int(10, "Stoch %K length", minval=1, group=gOS)
+kSmooth   = input.int(4,  "Stoch %K EMA smooth", minval=1, group=gOS)
+kThresh   = input.float(20, "Stoch %K < ", step=1, group=gOS)
+useCycle  = input.bool(false, "Require Cycle oversold", group=gOS)
+cycThresh = input.float(20, "Cycle < ", step=1, group=gOS)
+
+gExit = "Exit Rule"
 exitMode = input.string("Close >= SMA (mean revert)", "Exit when",
-     options=["Close >= SMA (mean revert)", "Stoch %K >= level", "RSI(2) >= level", "RSI(14) >= level", "Close < Trend SMA", "Time (N bars)"], group="Exit Rule")
-exitSMA  = input.int(20, "  Mean-revert SMA length (best in test)", minval=1, group="Exit Rule")
-exitK    = input.float(70, "  Stoch %K exit level", step=1, group="Exit Rule")
-exitRSI2 = input.float(70, "  RSI(2) exit level", step=1, group="Exit Rule")
-exitRSI  = input.float(50, "  RSI(14) exit level", step=1, group="Exit Rule")
-exitN    = input.int(10, "  Time exit (bars)", minval=1, group="Exit Rule")
-useDisaster = input.bool(false, "Add wide disaster stop", group="Exit Rule")
-disasterPct = input.float(20, "  Disaster stop %", step=1, group="Exit Rule")
+     options=["Close >= SMA (mean revert)", "Stoch %K >= level", "RSI(2) >= level", "RSI(14) >= level", "Close < Trend SMA", "Time (N bars)"], group=gExit)
+exitSMA  = input.int(20, "  Mean-revert SMA length (best in test)", minval=1, group=gExit)
+exitK    = input.float(70, "  Stoch %K exit level", step=1, group=gExit)
+exitRSI2 = input.float(70, "  RSI(2) exit level", step=1, group=gExit)
+exitRSI  = input.float(50, "  RSI(14) exit level", step=1, group=gExit)
+exitN    = input.int(10, "  Time exit (bars)", minval=1, group=gExit)
+useDisaster = input.bool(false, "Add wide disaster stop", group=gExit)
+disasterPct = input.float(20, "  Disaster stop %", step=1, group=gExit)
+
+gPead      = "Earnings / PEAD (#19/#20)"
+reqPeadBeat = input.bool(false, "Require recent earnings BEAT to enter", group=gPead)
+peadWin     = input.int(63, "  In-play window (bars since report)", minval=1, group=gPead)
 
 dateFrom = input.time(timestamp("2005-01-01"), "Backtest from", group="Window")
 
 // ----------------------------- Indicators ----------------------------- //
-ma  = ta.sma(close, maLen)
-rsi = ta.rsi(close, rsiLen)
+maFast = ta.sma(close, fastLen)
+maSlow = ta.sma(close, slowLen)
+maHi   = ta.sma(close, hiLen)
+rsi  = ta.rsi(close, rsiLen)
 rsi2 = ta.rsi(close, 2)
 smaExit = ta.sma(close, exitSMA)
 rawK   = ta.stoch(close, high, low, kLen)
@@ -53,12 +71,25 @@ xPreCalc = ta.ema(preC, 3)
 xDSS     = ta.stoch(xPreCalc, xPreCalc, xPreCalc, PDS)
 cycle    = ta.ema(0.5 * xDSS + 0.5 * xPreCalc[1], 3)
 
+// ----------------------------- Earnings / PEAD (#19/#20) ----------------------------- //
+epsAct = request.earnings(syminfo.tickerid, earnings.actual,   barmerge.gaps_on, ignore_invalid_symbol=true)
+epsEst = request.earnings(syminfo.tickerid, earnings.estimate, barmerge.gaps_on, ignore_invalid_symbol=true)
+var float lastSurp  = na
+var int   lastErnBar = na
+if not na(epsAct)
+    lastErnBar := bar_index
+    lastSurp := (not na(epsEst) and epsEst != 0) ? (epsAct - epsEst) / math.abs(epsEst) * 100.0 : na
+barsSinceErn = na(lastErnBar) ? na : bar_index - lastErnBar
+peadBeat = not na(barsSinceErn) and barsSinceErn <= peadWin and not na(lastSurp) and lastSurp > 0
+
 // ----------------------------- Logic ----------------------------- //
-trendUp  = close > ma
+legacyTrend = trendMode == "Legacy: Close>SMA200"
+trendUp  = legacyTrend ? close > maSlow : maFast > maSlow
+hiConv   = close > maHi
 osRSI    = not useRSI   or rsi    < rsiThresh
 osK      = not useK     or stochK < kThresh
 osCycle  = not useCycle or cycle  < cycThresh
-entrySignal = trendUp and osRSI and osK and osCycle
+entrySignal = trendUp and osRSI and osK and osCycle and (not reqHiConv or hiConv) and (not reqPeadBeat or peadBeat)
 
 held = strategy.position_size > 0 ? (bar_index - strategy.opentrades.entry_bar_index(strategy.opentrades - 1)) : na
 exitCond = switch exitMode
@@ -66,7 +97,7 @@ exitCond = switch exitMode
     "Stoch %K >= level"          => stochK >= exitK
     "RSI(2) >= level"            => rsi2 >= exitRSI2
     "RSI(14) >= level"           => rsi   >= exitRSI
-    "Close < Trend SMA"          => close < ma
+    "Close < Trend SMA"          => close < maSlow
     "Time (N bars)"              => held >= exitN
     => close >= smaExit
 
@@ -81,4 +112,5 @@ if strategy.position_size > 0
     else if useDisaster
         strategy.exit("Disaster", "Long", stop=strategy.position_avg_price * (1 - disasterPct / 100.0))
 
-plot(ma, "Trend SMA", color=color.new(color.gray, 0), linewidth=1)
+plot(maSlow, "Slow SMA", color=color.new(color.gray, 0), linewidth=1)
+plot(maFast, "Fast SMA", color = maFast > maSlow ? color.new(color.green, 0) : color.new(color.red, 0), linewidth=1)

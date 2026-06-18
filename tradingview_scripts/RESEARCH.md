@@ -300,8 +300,10 @@ STOP   : none tight (they hurt); >MA200 is the risk control. Optional wide disas
 HOLD   : ~1–3 weeks
 ```
 
-- TradingView: `dip_in_uptrend.pine` (indicator, BUY/SELL markers + status table),
-  `dip_in_uptrend_strategy.pine` (Strategy Tester: win rate / profit factor / equity).
+- TradingView: `dip_in_uptrend.pine` (indicator — #22 regime filter SMA50>SMA200 with the
+  Close>SMA85 hi-conv tier, BUY/BUY★/SELL markers, PEAD earnings-surprise label + status table),
+  `dip_in_uptrend_strategy.pine` (Strategy Tester: win rate / profit factor / equity, with
+  optional hi-conv and earnings-beat entry filters). `--legacy` Close>SMA200 selectable in both.
 - Scanner: `dip_scan.py` → ranked dated CSV in `results/<YYYYMMDD>/`. Ranks by `DipRank_PEAD`
   (DipRank with the #19/#20 earnings-surprise tilt; `--no-pead` to disable) and reports each
   hit's recent `earn_surprise` / `earn_age_d`.

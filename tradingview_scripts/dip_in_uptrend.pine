@@ -1,22 +1,30 @@
 // Dip-in-Uptrend — long entry + mean-reversion exit, derived from backtesting
-// sub-components of "Cycle and Stoch" + "寻龙诀 Panel".
+// sub-components of "Cycle and Stoch" + "寻龙诀 Panel", upgraded with research #18-22.
 //
-// ENTRY : Close > SMA200  AND  RSI(14) < 40  AND  Stoch %K(10,EMA4) < 20
+// ENTRY : SMA50 > SMA200 (up-regime, #22)  AND  RSI(14) < 40  AND  Stoch %K(10,EMA4) < 20
+//         hi-conv tier = also Close > SMA85 (the ~85-day MA = the per-trade-edge peak, #22)
+//         --legacy filter (Close > SMA200) selectable in inputs.
 // EXIT  : Close >= SMA20  (default; sell back at the mean — best exit in testing).
 //         Options: Stoch %K>=70, RSI(2)>=70 (faster), RSI(14)>=50, MA break, time.
+// PEAD  : shows the most recent earnings surprise (actual vs estimate, #19/#20). A recent
+//         BEAT is a fundamental tailwind for a dip-buy; surfaced as a label + table, not a gate.
 //
-// Backtested out-of-sample (2019-2026, 30-name daily basket):
-//   SMA20 exit ~74% win, PF ~2.2 | %K>=70 ~71% win, PF ~2.0. Sell into STRENGTH;
-//   trailing/volatility stops underperform this mean-reversion setup.
-// Stops HURT this setup (dips that go deeper are the ones that bounce); the
-// >SMA200 filter is the risk control. Entry+exit on close; add costs yourself.
+// Evidence (RESEARCH.md, OOS 2019-2026, detrended vs SPY):
+//   #22  SMA50>SMA200 regime beats Close>SMA200 (higher per-trade edge, more stable, DSR 1.00);
+//        the trend edge lives in a length BAND ~80-200 (peak ~85), not a single magic number.
+//   #4-6 oversold-in-uptrend bounces; sell into STRENGTH; tight/trailing stops HURT this setup.
+// Entry+exit on close; add costs yourself. PEAD/earnings best on a DAILY chart.
 
 //@version=6
 indicator("Dip-in-Uptrend (Cycle+寻龙诀)", shorttitle="DipUptrend", overlay=true)
 
 // ----------------------------- Inputs ----------------------------- //
-gTrend = "Trend Filter"
-maLen  = input.int(200, "Trend SMA length", minval=1, group=gTrend)
+gTrend    = "Trend Filter (#22)"
+trendMode = input.string("Regime: SMA50>SMA200 (#22)", "Trend filter",
+     options=["Regime: SMA50>SMA200 (#22)", "Legacy: Close>SMA200"], group=gTrend)
+fastLen   = input.int(50,  "Regime fast SMA", minval=1, group=gTrend)
+slowLen   = input.int(200, "Regime slow SMA / legacy trend SMA", minval=1, group=gTrend)
+hiLen     = input.int(85,  "Hi-conviction SMA (Close above = hi-conv)", minval=1, group=gTrend)
 
 gOS = "Oversold Entry (all enabled must be true)"
 useRSI    = input.bool(true,  "Require RSI oversold", group=gOS)
@@ -38,13 +46,19 @@ exitRSI2 = input.float(70, "  RSI(2) exit level", step=1, group=gExit)
 exitRSI  = input.float(50, "  RSI(14) exit level", step=1, group=gExit)
 exitN    = input.int(10, "  Time exit (bars)", minval=1, group=gExit)
 
+gPead   = "Earnings / PEAD (#19/#20)"
+usePead = input.bool(true,  "Show recent earnings surprise", group=gPead)
+peadWin = input.int(63, "  In-play window (bars since report; ~1 qtr daily)", minval=1, group=gPead)
+
 gVis = "Visual"
 showShade = input.bool(true, "Shade while in trade", group=gVis)
 showTable = input.bool(true, "Show status table", group=gVis)
 
 // ----------------------------- Indicators ----------------------------- //
-ma  = ta.sma(close, maLen)
-rsi = ta.rsi(close, rsiLen)
+maFast = ta.sma(close, fastLen)
+maSlow = ta.sma(close, slowLen)
+maHi   = ta.sma(close, hiLen)
+rsi  = ta.rsi(close, rsiLen)
 rsi2 = ta.rsi(close, 2)
 smaExit = ta.sma(close, exitSMA)
 rawK   = ta.stoch(close, high, low, kLen)
@@ -55,14 +69,31 @@ xPreCalc = ta.ema(preC, 3)
 xDSS     = ta.stoch(xPreCalc, xPreCalc, xPreCalc, PDS)
 cycle    = ta.ema(0.5 * xDSS + 0.5 * xPreCalc[1], 3)
 
-// ----------------------------- Entry / Exit state machine ----------------------------- //
-trendUp  = close > ma
+// ----------------------------- Trend filter (#22) ----------------------------- //
+legacyTrend = trendMode == "Legacy: Close>SMA200"
+regimeUp = maFast > maSlow
+trendUp  = legacyTrend ? close > maSlow : regimeUp
+hiConv   = close > maHi                         // the ~85-day per-trade-edge tier
+
 osRSI    = not useRSI   or rsi    < rsiThresh
 osK      = not useK     or stochK < kThresh
 osCycle  = not useCycle or cycle  < cycThresh
 oversold = osRSI and osK and osCycle
 entrySignal = trendUp and oversold
 
+// ----------------------------- Earnings / PEAD (#19/#20) ----------------------------- //
+epsAct = request.earnings(syminfo.tickerid, earnings.actual,   barmerge.gaps_on, ignore_invalid_symbol=true)
+epsEst = request.earnings(syminfo.tickerid, earnings.estimate, barmerge.gaps_on, ignore_invalid_symbol=true)
+var float lastSurp  = na
+var int   lastErnBar = na
+if not na(epsAct)
+    lastErnBar := bar_index
+    lastSurp := (not na(epsEst) and epsEst != 0) ? (epsAct - epsEst) / math.abs(epsEst) * 100.0 : na
+barsSinceErn = na(lastErnBar) ? na : bar_index - lastErnBar
+peadInPlay = usePead and not na(barsSinceErn) and barsSinceErn <= peadWin
+peadBeat   = peadInPlay and not na(lastSurp) and lastSurp > 0
+
+// ----------------------------- Entry / Exit state machine ----------------------------- //
 var bool  inTrade   = false
 var float entryPx   = na
 var int   entryBar  = na
@@ -73,7 +104,7 @@ exitCond = switch exitMode
     "Stoch %K >= level"          => stochK >= exitK
     "RSI(2) >= level"            => rsi2 >= exitRSI2
     "RSI(14) >= level"           => rsi   >= exitRSI
-    "Close < Trend SMA"          => close < ma
+    "Close < Trend SMA"          => close < maSlow
     "Time (N bars)"              => held >= exitN
     => close >= smaExit
 
@@ -87,29 +118,46 @@ if buy
     entryBar := bar_index
 
 tradeRet = inTrade or sell ? (close / entryPx - 1.0) * 100.0 : na
+buyHi   = buy and hiConv
+buyNorm = buy and not hiConv
 
 // ----------------------------- Plots ----------------------------- //
-plot(ma, "Trend SMA", color = trendUp ? color.new(color.green, 0) : color.new(color.red, 0), linewidth=2)
+plot(maSlow, "Slow SMA (200)", color=color.new(color.gray, 0), linewidth=1)
+plot(maFast, "Fast SMA (50)", color = regimeUp ? color.new(color.green, 0) : color.new(color.red, 0), linewidth=2)
+plot(hiLen != slowLen and hiLen != fastLen ? maHi : na, "Hi-conv SMA (85)", color=color.new(color.aqua, 55), linewidth=1)
 bgcolor(showShade and (inTrade or sell) ? color.new(color.green, 90) : na, title="In trade")
-plotshape(buy,  "BUY",  style=shape.triangleup,   location=location.belowbar, color=color.new(color.green, 0), size=size.small, text="BUY",  textcolor=color.white)
-plotshape(sell, "SELL", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0),   size=size.small, text="SELL", textcolor=color.white)
+plotshape(buyHi,   "BUY hi-conv", style=shape.triangleup,   location=location.belowbar, color=color.new(color.lime, 0),   size=size.normal, text="BUY★", textcolor=color.white)
+plotshape(buyNorm, "BUY",         style=shape.triangleup,   location=location.belowbar, color=color.new(color.green, 25), size=size.small,  text="BUY",  textcolor=color.white)
+plotshape(sell,    "SELL",        style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0),    size=size.small,  text="SELL", textcolor=color.white)
 
-alertcondition(buy,  title="Dip-in-Uptrend BUY",  message="BUY {{ticker}} ({{interval}}) at {{close}}")
-alertcondition(sell, title="Dip-in-Uptrend SELL", message="SELL {{ticker}} ({{interval}}) at {{close}}")
+if buy and peadInPlay and not na(lastSurp)
+    label.new(bar_index, low, "ER " + (lastSurp >= 0 ? "+" : "") + str.tostring(lastSurp, "#.#") + "%",
+         yloc=yloc.belowbar, style=label.style_label_up,
+         color = peadBeat ? color.new(color.teal, 0) : color.new(color.maroon, 0),
+         textcolor=color.white, size=size.small)
+
+alertcondition(buy,    title="Dip-in-Uptrend BUY",          message="BUY {{ticker}} ({{interval}}) at {{close}}")
+alertcondition(buyHi,  title="Dip-in-Uptrend hi-conv BUY★", message="HI-CONV BUY {{ticker}} ({{interval}}) at {{close}}")
+alertcondition(sell,   title="Dip-in-Uptrend SELL",         message="SELL {{ticker}} ({{interval}}) at {{close}}")
 
 // ----------------------------- Status table ----------------------------- //
 f_col(ok) => ok ? color.lime : color.gray
-var table tb = table.new(position.top_right, 2, 6, bgcolor=color.new(color.black, 30), frame_color=color.new(color.white, 0), frame_width=1, border_color=color.new(color.white, 70), border_width=1)
+var table tb = table.new(position.top_right, 2, 8, bgcolor=color.new(color.black, 30), frame_color=color.new(color.white, 0), frame_width=1, border_color=color.new(color.white, 70), border_width=1)
 if barstate.islast and showTable
     table.cell(tb, 0, 0, "Dip-in-Uptrend", text_color=color.white)
     table.cell(tb, 1, 0, inTrade ? ("● in trade " + str.tostring(tradeRet, "#.#") + "%") : "— flat", text_color = inTrade ? color.lime : color.gray)
-    table.cell(tb, 0, 1, "Close > SMA" + str.tostring(maLen), text_color=color.white)
+    table.cell(tb, 0, 1, legacyTrend ? "Close>SMA" + str.tostring(slowLen) : "Regime SMA" + str.tostring(fastLen) + ">SMA" + str.tostring(slowLen), text_color=color.white)
     table.cell(tb, 1, 1, trendUp ? "yes" : "no", text_color=f_col(trendUp))
-    table.cell(tb, 0, 2, "RSI(" + str.tostring(rsiLen) + ")", text_color=color.white)
-    table.cell(tb, 1, 2, str.tostring(rsi, "#.#"), text_color=f_col(osRSI))
-    table.cell(tb, 0, 3, "Stoch %K", text_color=color.white)
-    table.cell(tb, 1, 3, str.tostring(stochK, "#.#"), text_color=f_col(osK))
-    table.cell(tb, 0, 4, "Cycle", text_color=color.white)
-    table.cell(tb, 1, 4, str.tostring(cycle, "#.#"), text_color = useCycle ? f_col(osCycle) : color.gray)
-    table.cell(tb, 0, 5, "Exit: " + exitMode, text_color=color.white)
-    table.cell(tb, 1, 5, exitCond ? "ready" : "no", text_color=f_col(exitCond))
+    table.cell(tb, 0, 2, "Hi-conv (>SMA" + str.tostring(hiLen) + ")", text_color=color.white)
+    table.cell(tb, 1, 2, hiConv ? "yes ★" : "no", text_color=f_col(hiConv))
+    table.cell(tb, 0, 3, "RSI(" + str.tostring(rsiLen) + ")", text_color=color.white)
+    table.cell(tb, 1, 3, str.tostring(rsi, "#.#"), text_color=f_col(osRSI))
+    table.cell(tb, 0, 4, "Stoch %K", text_color=color.white)
+    table.cell(tb, 1, 4, str.tostring(stochK, "#.#"), text_color=f_col(osK))
+    table.cell(tb, 0, 5, "Cycle", text_color=color.white)
+    table.cell(tb, 1, 5, str.tostring(cycle, "#.#"), text_color = useCycle ? f_col(osCycle) : color.gray)
+    table.cell(tb, 0, 6, "Earnings (PEAD)", text_color=color.white)
+    ernTxt = not usePead ? "off" : na(barsSinceErn) ? "none" : na(lastSurp) ? "n/a" : ((lastSurp >= 0 ? "+" : "") + str.tostring(lastSurp, "#.#") + "% " + (peadInPlay ? str.tostring(barsSinceErn) + "b" : "old"))
+    table.cell(tb, 1, 6, ernTxt, text_color = peadBeat ? color.lime : (peadInPlay and not na(lastSurp) and lastSurp < 0 ? color.red : color.gray))
+    table.cell(tb, 0, 7, "Exit: " + exitMode, text_color=color.white)
+    table.cell(tb, 1, 7, exitCond ? "ready" : "no", text_color=f_col(exitCond))
