@@ -13,6 +13,9 @@ env/
 # Scan outputs (regenerate locally; don't commit)
 results/
 
+# Large regenerable backtest caches (#24 swing study; panel_full.pkl is 253MB > GitHub limit)
+Stock_OneClick/reports/exit_cache/
+
 # IDE
 .vscode/
 .idea/
@@ -21,3 +24,8 @@ results/
 .DS_Store
 Thumbs.db
 tradingview_scripts/industry_map.json.tmp
+
+# Secrets / API keys (NEVER commit)
+.env
+*.env
+

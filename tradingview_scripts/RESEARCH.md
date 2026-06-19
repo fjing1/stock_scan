@@ -73,6 +73,7 @@ against the trading literature.
 | 21 | Is the static 2019 split right? Walk-forward + overfit haircuts | `walkforward.py` | ⚠️ rolling-origin OOS + DSR/PBO. Equal-weight robust (OOS ~0.37, recent-3y 0.73); adaptive weighting needs a ≥4–6mo window and **fails the haircut** (DSR 0.78, PBO 0.65) → config selection is overfit |
 | 22 | Is SMA200 the best trend filter? (1–200 sweep + fib/EMA) | `ma_filter_sweep.py`, `ma_length_curve.py` | ✅ **No — 200 is too long.** Edge peaks at the ~85d MA (OOS ~0.9%/trade vs 0.55% at 200) and the **50>200 regime-cross** (t 4.7, DSR 1.00); fib & EMA show no magic; dead-zone n≈10–55. Scanner filter → SMA50>SMA200 (+ Close>SMA85 hi-conv tier) |
 | 23 | Does a 15/30/60m intraday confirmation improve the daily entry? | `mtf_intraday_test.py` | ~ **weak/indicative** — 60m (2yr, n=1219): confirmed +0.29% vs unconfirmed −1.11% (Δ+1.4pp, t 2.2); 15m directional (70% vs 52% win, t 1.2, n 46); 30m null. A timing overlay (`dip_scan --confirm-tf`), not a proven edge |
+| 24 | Regime-switch (hold uptrend + MR-bounce downtrend) vs buy&hold over a FULL cycle (2000-26)? | `_swing_research.py`, `_swing_basket.py` (Stock_OneClick/backend); report `Stock_OneClick/reports/swing_strategy_2026-06-19.md` | ✅ **on the INDEX** — COMBO beats B&H: SPY 6.4%/Sharpe 0.50/−29%DD vs 6.4%/0.42/−56%; QQQ 9.8%/0.56/−56% vs 8.2%/0.43/−83%. ❌ on a survivor large-cap stock basket (B&H wins 11.7% vs 5.2% — survivorship = no bear pain). MR best-practice (Connors/Alvarez/Faber/Pagonidis 2013): RSI2<5 & IBS<0.2 entry, **first-up-close exit**, MR only in regime; reversal decayed post-2010 |
 
 ### Key results
 
@@ -124,6 +125,22 @@ trend-following exits, momentum entries DO make money: MACD-cross + 63-day hold 
 for every momentum combo — these capture **market beta over a multi-month hold, not a
 timing edge**. Only the mean-reversion dip-in-uptrend shows true alpha (detrended
 ~56–60%). Lesson: absolute PF can hide beta; judge on excess return.
+
+**Regime-switch beats buy-&-hold — but only on the index (24).** The dip-in-uptrend edge
+(4–11) is cash in bears; this asks whether a full strategy can beat *buy-and-hold* over a
+cycle that includes 2000–02 and 2008. The **COMBO** — hold the index when above its 200-day
+SMA (Faber, 3-day confirm), and trade short MR bounces (RSI2<10, exit first up-close / 10d)
+when below, instead of cash — does, on **SPY/QQQ**: SPY 2000–26 CAGR 6.4% / Sharpe 0.50 /
+MaxDD −29% vs B&H 6.4% / 0.42 / −56%; QQQ 9.8% / 0.56 / −56% vs 8.2% / 0.43 / −83%. The edge is
+crash-protection + bear-bounce harvesting (+2.4% SPY in 2000–09 while B&H lost −2.7%); it lags
+in the uninterrupted 2010s bull (the insurance premium). **It does NOT beat B&H on a survivor
+large-cap stock basket** (40 names: B&H 11.7% vs COMBO 5.2%) — survivorship means the basket
+never had the bear pain to protect against, and the trend filter's cash-drag guts bull returns.
+So swing/MR + trend-timing belongs on the **broad index**, not hand-picked stocks. MR rules are
+research best-practice (Connors/Alvarez: RSI2 oversold + IBS<0.2, first-up-close exit, stops hurt
+MR; Faber trend-timing for the drawdown win; Pagonidis 2013 / Pandey&Joshi 2023 for the IBS edge).
+Honest caveat: short-term reversal has decayed post-2010, so the bear sleeve is weaker going
+forward. Encoded as the **COMBO mode** in `dip_in_uptrend_strategy.pine`.
 
 ## 4b. Principles from elite quant practice (Citadel / RenTec / Two Sigma)
 

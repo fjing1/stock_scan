@@ -12,3 +12,5 @@ consent.yahoo.com
 # FRED (St. Louis Fed) — free, KEYLESS macro data via fredgraph.csv. Added at user
 # request for macro-regime / sector-rotation research. Remove this line to revoke.
 fred.stlouisfed.org
+# Alpha Vantage — market-data API (user signed up; intraday + fundamentals). Key in .env.
+www.alphavantage.co

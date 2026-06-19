@@ -13,6 +13,10 @@
 //   #22  SMA50>SMA200 regime beats Close>SMA200 (higher per-trade edge, more stable, DSR 1.00);
 //        the trend edge lives in a length BAND ~80-200 (peak ~85), not a single magic number.
 //   #4-6 oversold-in-uptrend bounces; sell into STRENGTH; tight/trailing stops HURT this setup.
+//   #24  MR best-practice (Connors/Alvarez/Faber/Pagonidis): add an IBS<0.2 confirm to the
+//        oversold entry and a "first up-close" exit (best in Alvarez's tests). The full
+//        regime-switch COMBO (hold uptrend + MR-bounce downtrend, beats buy&hold on SPY/QQQ
+//        over a full cycle) lives in dip_in_uptrend_strategy.pine — it needs position state.
 // Entry+exit on close; add costs yourself. PEAD/earnings best on a DAILY chart.
 
 //@version=6
@@ -36,10 +40,12 @@ kSmooth   = input.int(4,  "Stoch %K EMA smooth", minval=1, group=gOS)
 kThresh   = input.float(20, "Stoch %K < ", step=1, group=gOS)
 useCycle  = input.bool(false, "Require Cycle oversold", group=gOS)
 cycThresh = input.float(20, "Cycle < ", step=1, group=gOS)
+useIBS    = input.bool(false, "Require IBS < (MR best-practice, #24)", group=gOS)
+ibsThresh = input.float(0.2, "IBS < ", step=0.05, minval=0, maxval=1, group=gOS)
 
 gExit = "Exit Rule"
 exitMode = input.string("Close >= SMA (mean revert)", "Exit when",
-     options=["Close >= SMA (mean revert)", "Stoch %K >= level", "RSI(2) >= level", "RSI(14) >= level", "Close < Trend SMA", "Time (N bars)"], group=gExit)
+     options=["Close >= SMA (mean revert)", "First up-close (#24 best)", "Stoch %K >= level", "RSI(2) >= level", "RSI(14) >= level", "Close < Trend SMA", "Time (N bars)"], group=gExit)
 exitSMA  = input.int(20, "  Mean-revert SMA length (best in test)", minval=1, group=gExit)
 exitK    = input.float(70, "  Stoch %K exit level", step=1, group=gExit)
 exitRSI2 = input.float(70, "  RSI(2) exit level", step=1, group=gExit)
@@ -68,6 +74,8 @@ preC     = ta.stoch(close, high, low, PDS)
 xPreCalc = ta.ema(preC, 3)
 xDSS     = ta.stoch(xPreCalc, xPreCalc, xPreCalc, PDS)
 cycle    = ta.ema(0.5 * xDSS + 0.5 * xPreCalc[1], 3)
+ibs      = (high - low) != 0 ? (close - low) / (high - low) : 0.5
+firstUpClose = close > close[1]
 
 // ----------------------------- Trend filter (#22) ----------------------------- //
 legacyTrend = trendMode == "Legacy: Close>SMA200"
@@ -78,7 +86,8 @@ hiConv   = close > maHi                         // the ~85-day per-trade-edge ti
 osRSI    = not useRSI   or rsi    < rsiThresh
 osK      = not useK     or stochK < kThresh
 osCycle  = not useCycle or cycle  < cycThresh
-oversold = osRSI and osK and osCycle
+osIBS    = not useIBS   or ibs    < ibsThresh
+oversold = osRSI and osK and osCycle and osIBS
 entrySignal = trendUp and oversold
 
 // ----------------------------- Earnings / PEAD (#19/#20) ----------------------------- //
@@ -101,6 +110,7 @@ var int   entryBar  = na
 held = inTrade ? (bar_index - entryBar) : na
 exitCond = switch exitMode
     "Close >= SMA (mean revert)" => close >= smaExit
+    "First up-close (#24 best)"  => firstUpClose
     "Stoch %K >= level"          => stochK >= exitK
     "RSI(2) >= level"            => rsi2 >= exitRSI2
     "RSI(14) >= level"           => rsi   >= exitRSI
