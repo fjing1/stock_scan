@@ -3,7 +3,13 @@
 Applies the validated rule to the latest daily bar of every symbol in
 stock_symbols_1243.py:
 
-    Entry = Close > SMA200  AND  RSI(14) < 40  AND  Stoch %K(10,EMA4) < 20
+    Entry  = SMA50 > SMA200 (up-regime)  AND  RSI(14) < 40  AND  Stoch %K(10,EMA4) < 20
+    hi_conv = the above PLUS Close > SMA85  (the ~85-day MA is the per-trade-edge sweet spot)
+
+The trend filter is the #22 upgrade (ma_filter_sweep.py / ma_length_curve.py): the up-regime
+golden cross (SMA50>SMA200) is the most robust filter (highest OOS t-stat, most signals,
+DSR=1.00) and beats the original Close>SMA200; the ~85-day MA marks the highest per-trade
+edge, surfaced as the `hi_conv` tier. `--legacy-trend` restores the original Close>SMA200.
 
 Reports:
     FRESH BUY    -- signal true today and NOT true yesterday (actionable now)
@@ -14,6 +20,7 @@ Writes a dated CSV to results/<YYYYMMDD>/ and prints the fresh-buy list.
 
     python dip_scan.py                 # full universe (stocks + ETFs)
     python dip_scan.py --universe etfs
+    python dip_scan.py --legacy-trend  # revert to Close>SMA200
     python dip_scan.py --limit 100     # quick test
 """
 from __future__ import annotations
@@ -28,8 +35,12 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from cycle_patter_for_swing import compute_cycle_stoch  # noqa: E402
+from pead_drift import load_earnings  # noqa: E402
 
 import yfinance as yf  # noqa: E402
+
+PEAD_WINDOW_DAYS = 95   # ~63 trading days a name stays "in play" after an earnings report
+PEAD_MAX_TILT = 12      # max +/- DipRank points contributed by the earnings-surprise tilt
 
 
 def load_universe(which):
@@ -67,7 +78,7 @@ def fetch_chunk(symbols, period="2y", interval="1d"):
     return out
 
 
-def scan_symbol(sym, df, rsi_max, k_max):
+def scan_symbol(sym, df, rsi_max, k_max, legacy_trend=False):
     if df is None or len(df) < 260:           # need SMA200 + 12m momentum + warmup
         return None
     if not {"High", "Low", "Close"}.issubset(df.columns):
@@ -79,10 +90,15 @@ def scan_symbol(sym, df, rsi_max, k_max):
     close = df["Close"].astype(float)
     sma200 = close.rolling(200).mean()
     ma50 = close.rolling(50).mean()
+    ma85 = close.rolling(85).mean()
     if pd.isna(sma200.iloc[-1]) or pd.isna(cs["rsi"].iloc[-1]):
         return None
 
-    trend = close > sma200
+    # Trend filter (#22, ma_filter_sweep.py / ma_length_curve.py): the up-regime golden cross
+    # SMA50>SMA200 is the most robust filter (highest OOS t, most signals, DSR=1.00) and beats
+    # the legacy Close>SMA200. The ~85-day MA (highest per-trade edge) is surfaced as hi_conv,
+    # not a hard gate. --legacy-trend reverts to Close>SMA200.
+    trend = (close > sma200) if legacy_trend else (ma50 > sma200)
     oversold = (cs["rsi"] < rsi_max) & (cs["stoch_k"] < k_max)
     signal = (trend & oversold).fillna(False)
 
@@ -93,6 +109,8 @@ def scan_symbol(sym, df, rsi_max, k_max):
     cyc0 = float(cs["cycle"].iloc[-1])
     c0 = float(close.iloc[-1])
     pct_ma = (c0 / float(sma200.iloc[-1]) - 1.0) * 100.0
+    pct_ma85 = (c0 / float(ma85.iloc[-1]) - 1.0) * 100.0 if not pd.isna(ma85.iloc[-1]) else 0.0
+    hi_conv = "Y" if (not pd.isna(ma85.iloc[-1]) and c0 > float(ma85.iloc[-1])) else "N"
     trend_now = bool(trend.iloc[-1])
     # ranking features (validated in rank_test.py)
     mom12m = (c0 / float(close.iloc[-253]) - 1.0) * 100.0
@@ -109,21 +127,24 @@ def scan_symbol(sym, df, rsi_max, k_max):
     return {
         "symbol": sym, "status": status, "date": df.index[-1].date().isoformat(),
         "close": round(c0, 2), "rsi": round(rsi0, 1), "stochK": round(k0, 1),
-        "cycle": round(cyc0, 1), "pct_above_MA200": round(pct_ma, 1),
+        "cycle": round(cyc0, 1), "hi_conv": hi_conv, "pct_above_MA85": round(pct_ma85, 1),
+        "pct_above_MA200": round(pct_ma, 1),
         "mom_12m": round(mom12m, 1), "vs_MA50": round(vs_ma50, 1),
     }
 
 
-def confirm_15m(sym, window, body_mult, vol_mult, up_frac):
-    """Intraday turn confirmation: is there a strong up 15m candle on above-avg
-    volume within the last `window` bars?
+def confirm_intraday(sym, interval, window, body_mult, vol_mult, up_frac):
+    """Intraday turn confirmation: is there a strong up bar on above-avg volume within the last
+    `window` bars of the chosen intraday `interval` (15m/30m/60m)? (#23: 60m is the best-powered
+    timeframe, 15m is directionally supportive, 30m showed nothing.)
 
-    Strong up bar = close>open AND body >= body_mult x avg|body|(20) AND closes in
-    top (1-up_frac) of its range AND volume >= vol_mult x avg vol(20).
-    Returns dict with conf15 Y/N, the latest qualifying bar's up%, vol ratio, time.
+    Strong up bar = close>open AND body >= body_mult x avg|body|(20) AND closes in top
+    (1-up_frac) of its range AND volume >= vol_mult x avg vol(20).
+    Returns dict with conf Y/N, the latest qualifying bar's up%, vol ratio, time.
     """
+    period = "1mo" if interval == "60m" else "5d"
     try:
-        d = yf.download(sym, period="5d", interval="15m",
+        d = yf.download(sym, period=period, interval=interval,
                         auto_adjust=False, progress=False)
     except Exception:
         return None
@@ -141,12 +162,42 @@ def confirm_15m(sym, window, body_mult, vol_mult, up_frac):
               & (close_pos >= up_frac) & (v >= vol_mult * avg_vol)).fillna(False)
     recent = strong.iloc[-window:]
     if not recent.any():
-        return {"conf15": "N", "up15": np.nan, "volx": np.nan, "bar15": ""}
+        return {"conf": "N", "up": np.nan, "volx": np.nan, "bar": ""}
     idx = recent[recent].index[-1]                       # latest qualifying bar
     up = float((c.loc[idx] - o.loc[idx]) / o.loc[idx] * 100)
     volx = float(v.loc[idx] / avg_vol.loc[idx]) if avg_vol.loc[idx] else np.nan
-    return {"conf15": "Y", "up15": round(up, 2),
-            "volx": round(volx, 1), "bar15": str(idx)[5:16]}
+    return {"conf": "Y", "up": round(up, 2),
+            "volx": round(volx, 1), "bar": str(idx)[5:16]}
+
+
+def apply_pead_tilt(df):
+    """Long-only PEAD tilt (RESEARCH.md #19/#20): nudge DipRank by a name's most recent
+    earnings surprise. A name is "in play" if it reported within PEAD_WINDOW_DAYS; its
+    surprise percentile (among in-play hits) maps to +/-PEAD_MAX_TILT DipRank points, and
+    out-of-play names are neutral (0). PEAD as a long-only tilt is the deployable use found
+    in #20 (it did NOT reliably lift the market-neutral ensemble, but it is a real,
+    orthogonal, OOS-persistent long-side effect). Earnings are fetched ONLY for the hits
+    (fast) and reuse the cached surprises. Adds earn_surprise, earn_age_d, DipRank_PEAD."""
+    earn = load_earnings(list(df["symbol"]), use_cache=True)
+    surp, age = [], []
+    for sym, dstr in zip(df["symbol"], df["date"]):
+        today = pd.Timestamp(dstr)
+        best = None
+        for ds, sp in earn.get(sym, []):
+            a = (today - pd.Timestamp(ds)).days
+            if 0 <= a <= PEAD_WINDOW_DAYS and (best is None or a < best[0]):
+                best = (a, sp)
+        age.append(best[0] if best else np.nan)
+        surp.append(round(best[1], 1) if best else np.nan)
+    df["earn_surprise"] = surp
+    df["earn_age_d"] = age
+    inplay = df["earn_surprise"].notna()
+    tilt = pd.Series(0.0, index=df.index)
+    if inplay.sum() >= 3:
+        pr = df.loc[inplay, "earn_surprise"].rank(pct=True)
+        tilt.loc[inplay] = (pr - 0.5) * 2 * PEAD_MAX_TILT
+    df["DipRank_PEAD"] = (df["DipRank"] + tilt).clip(0, 100).round().astype(int)
+    return df
 
 
 def main(argv=None):
@@ -157,31 +208,38 @@ def main(argv=None):
     ap.add_argument("--chunk", type=int, default=120)
     ap.add_argument("--limit", type=int, default=0, help="cap symbols (testing)")
     ap.add_argument("--no-confirm", action="store_true",
-                    help="skip the 15-minute strong-up-bar confirmation")
+                    help="skip the intraday strong-up-bar confirmation")
     ap.add_argument("--require-confirm", action="store_true",
-                    help="keep only hits with a 15m confirmation")
+                    help="keep only hits with an intraday confirmation")
+    ap.add_argument("--confirm-tf", choices=["15m", "30m", "60m"], default="15m",
+                    help="intraday confirmation timeframe (#23: 60m best-powered, 15m directional, 30m null)")
     ap.add_argument("--confirm-window", type=int, default=26,
-                    help="how many recent 15m bars to scan (26 ~= 1 session)")
+                    help="how many recent intraday bars to scan (26 ~= 1 session of 15m)")
     ap.add_argument("--body-mult", type=float, default=1.5,
                     help="strong-bar body vs 20-bar avg body")
     ap.add_argument("--vol-mult", type=float, default=1.5,
                     help="bar volume vs 20-bar avg volume")
     ap.add_argument("--up-frac", type=float, default=0.6,
                     help="min close position in bar range (0.6 = upper 40%)")
+    ap.add_argument("--no-pead", action="store_true",
+                    help="skip the PEAD earnings-surprise tilt on DipRank")
+    ap.add_argument("--legacy-trend", action="store_true",
+                    help="use the original Close>SMA200 filter instead of the #22 SMA50>SMA200 & Close>SMA85")
     args = ap.parse_args(argv)
 
     syms = load_universe(args.universe)
     if args.limit:
         syms = syms[: args.limit]
+    trend_desc = ">SMA200 (legacy)" if args.legacy_trend else "SMA50>SMA200 (regime, #22)"
     print(f"scanning {len(syms)} symbols (daily, dip-in-uptrend: "
-          f"RSI<{args.rsi_max:.0f} & %K<{args.k_max:.0f} & >SMA200) ...", flush=True)
+          f"RSI<{args.rsi_max:.0f} & %K<{args.k_max:.0f} & {trend_desc}) ...", flush=True)
 
     rows, scanned, report_date = [], 0, None
     for i in range(0, len(syms), args.chunk):
         chunk = syms[i: i + args.chunk]
         data = fetch_chunk(chunk)
         for s in chunk:
-            r = scan_symbol(s, data.get(s), args.rsi_max, args.k_max)
+            r = scan_symbol(s, data.get(s), args.rsi_max, args.k_max, args.legacy_trend)
             scanned += 1
             if r:
                 rows.append(r)
@@ -203,28 +261,35 @@ def main(argv=None):
     p_tr = df["pct_above_MA200"].rank(pct=True)
     df["DipRank"] = (100 * (0.45 * p_mom + 0.30 * p_pb + 0.25 * p_tr)).round().astype(int)
 
+    # ---- PEAD long-only tilt (#19/#20): nudge DipRank by recent earnings surprise ----
+    if not args.no_pead:
+        print(f"\napplying PEAD earnings-surprise tilt to {len(df)} hits ...", flush=True)
+        df = apply_pead_tilt(df)
+    rank_col = "DipRank_PEAD" if "DipRank_PEAD" in df.columns else "DipRank"
+
     # ---- 15-minute strong-up-bar confirmation (intraday turn) ----
     if not args.no_confirm:
-        print(f"\nchecking 15m confirmation for {len(df)} hits ...", flush=True)
-        recs = [confirm_15m(s, args.confirm_window, args.body_mult,
-                            args.vol_mult, args.up_frac) for s in df["symbol"]]
-        df["conf15"] = [r["conf15"] if r else "n/a" for r in recs]
-        df["up15%"] = [r["up15"] if r else np.nan for r in recs]
+        print(f"\nchecking {args.confirm_tf} confirmation for {len(df)} hits ...", flush=True)
+        recs = [confirm_intraday(s, args.confirm_tf, args.confirm_window, args.body_mult,
+                                 args.vol_mult, args.up_frac) for s in df["symbol"]]
+        df["conf"] = [r["conf"] if r else "n/a" for r in recs]
+        df["up%"] = [r["up"] if r else np.nan for r in recs]
         df["volx"] = [r["volx"] if r else np.nan for r in recs]
-        df["bar15"] = [r["bar15"] if r else "" for r in recs]
+        df["bar"] = [r["bar"] if r else "" for r in recs]
         if args.require_confirm:
-            df = df[df["conf15"] == "Y"]
+            df = df[df["conf"] == "Y"]
             if df.empty:
-                print("no hits with 15m confirmation.")
+                print(f"no hits with {args.confirm_tf} confirmation.")
                 return
-        df["_c"] = (df["conf15"] != "Y").astype(int)   # confirmed first
+        df["_c"] = (df["conf"] != "Y").astype(int)   # confirmed first
     else:
         df["_c"] = 0
 
     order = {"FRESH_BUY": 0, "ACTIVE": 1, "WATCH": 2}
     df["_o"] = df["status"].map(order)
-    df = df.sort_values(["_o", "_c", "DipRank"],
-                        ascending=[True, True, False]).drop(columns=["_o", "_c"])
+    df["_h"] = (df["hi_conv"] != "Y").astype(int) if "hi_conv" in df.columns else 0
+    df = df.sort_values(["_o", "_h", "_c", rank_col],
+                        ascending=[True, True, True, False]).drop(columns=["_o", "_h", "_c"])
 
     # save dated CSV under results/
     rd = (report_date or "latest").replace("-", "")
@@ -243,9 +308,10 @@ def main(argv=None):
     fresh = df[df["status"] == "FRESH_BUY"]
     show = fresh if len(fresh) else df[df["status"] == "ACTIVE"]
     title = "FRESH BUYS today" if len(fresh) else "ACTIVE setups (no fresh buys today)"
-    print(f"--- {title} (ranked by DipRank; 15m-confirmed first) ---")
-    cols = ["symbol", "DipRank", "conf15", "up15%", "volx", "bar15",
-            "close", "mom_12m", "vs_MA50", "pct_above_MA200", "rsi", "stochK"]
+    print(f"--- {title} (ranked by DipRank; hi-conv & {args.confirm_tf}-confirmed first) ---")
+    cols = ["symbol", "DipRank_PEAD", "DipRank", "hi_conv", "earn_surprise", "earn_age_d",
+            "conf", "up%", "volx", "bar",
+            "close", "mom_12m", "vs_MA50", "pct_above_MA85", "pct_above_MA200", "rsi", "stochK"]
     cols = [c for c in cols if c in show.columns]
     print(show[cols].head(40).to_string(index=False) if len(show) else "  (none)")
 

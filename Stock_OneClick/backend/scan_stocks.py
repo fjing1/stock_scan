@@ -509,12 +509,74 @@ def _get_forced_rescan_signal_dates(run_dt: datetime) -> list:
     return [x.date() for x in pd.bdate_range(start=start_date, end=run_dt.date())]
 
 
+EXIT_TRAIL_ATR_MULT = 5.0      # winning exit from the 2026-06-19 backtest: 5xATR(22) trailing stop, no target
+EXIT_TRAIL_ATR_LEN = 22
+
+
+def _atr_wilder(high: pd.Series, low: pd.Series, close: pd.Series, n: int = EXIT_TRAIL_ATR_LEN) -> pd.Series:
+    """Wilder's Average True Range (RMA-smoothed)."""
+    h = high.astype(float)
+    l = low.astype(float)
+    c = close.astype(float)
+    prev_c = c.shift(1)
+    tr = pd.concat([(h - l), (h - prev_c).abs(), (l - prev_c).abs()], axis=1).max(axis=1)
+    return tr.ewm(alpha=1.0 / n, adjust=False).mean()
+
+
+def compute_trailing_stop(ohlc: pd.DataFrame, base_loc: int, latest_loc: int,
+                          atr_mult: float = EXIT_TRAIL_ATR_MULT, atr_len: int = EXIT_TRAIL_ATR_LEN):
+    """Live volatility trailing stop for a long opened at bar ``base_loc`` and
+    evaluated through ``latest_loc``:  stop = (peak high since entry) - mult*ATR(atr_len).
+    Backtested as the best-return exit for 正式买入 entries (see reports/exit_strategy_backtest_*.md).
+    Returns a dict {stop, atr, peak, last_close, breached, breach_date} or None.
+    """
+    if ohlc is None or base_loc is None or latest_loc is None or latest_loc < base_loc:
+        return None
+    if not {"High", "Low", "Close"}.issubset(ohlc.columns) or len(ohlc) <= latest_loc:
+        return None
+    atr_series = _atr_wilder(ohlc["High"], ohlc["Low"], ohlc["Close"], atr_len)
+    highs = ohlc["High"].to_numpy(dtype=float)
+    lows = ohlc["Low"].to_numpy(dtype=float)
+    closes = ohlc["Close"].to_numpy(dtype=float)
+    atrs = atr_series.to_numpy(dtype=float)
+
+    peak = -np.inf
+    breach_loc = None
+    stop_at_breach = np.nan
+    for j in range(base_loc, latest_loc + 1):
+        if highs[j] > peak:
+            peak = highs[j]
+        a = atrs[j]
+        if not np.isfinite(a):
+            continue
+        stop_j = peak - atr_mult * a
+        if j > base_loc and lows[j] <= stop_j:   # entry bar itself can't stop out
+            breach_loc = j
+            stop_at_breach = stop_j
+            break
+
+    atr_last = atrs[latest_loc]
+    if not np.isfinite(atr_last):
+        return None
+    breached = breach_loc is not None
+    cur_stop = stop_at_breach if breached else (peak - atr_mult * atr_last)
+    return {
+        "stop": float(cur_stop),
+        "atr": float(atr_last),
+        "peak": float(peak),
+        "last_close": float(closes[latest_loc]),
+        "breached": bool(breached),
+        "breach_date": ohlc.index[breach_loc] if breached else None,
+    }
+
+
 def _build_followup_sheets(
     anchors: pd.DataFrame,
     run_dt: datetime,
     max_days: int = TRACK_MAX_DAYS,
     sector_map: dict[str, str] | None = None,
     sheet_prefix: str = "",
+    add_trail_stop: bool = False,
 ) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
     """
     生成 {sheet_name: dataframe}，sheet_name = 信号日 YYYY-MM-DD。
@@ -526,6 +588,7 @@ def _build_followup_sheets(
     today = run_dt.date()
     symbols = sorted(anchors["symbol"].unique().tolist())
     close_cache: dict[str, pd.Series] = {}
+    ohlc_cache: dict[str, pd.DataFrame] = {}
 
     for sym in symbols:
         try:
@@ -537,8 +600,14 @@ def _build_followup_sheets(
         s = d["Close"].copy()
         s.index = pd.to_datetime(s.index).date
         close_cache[sym] = s
+        if add_trail_stop:
+            ohlc_cache[sym] = d
 
     base_cols = ["symbol", "观海买点分", "板块", "D0_date", "D0_rule", "D0_close", "prior_14d_signal_dates"]
+    if add_trail_stop:
+        # insert the live trailing-stop columns right after the entry price
+        base_cols = ["symbol", "观海买点分", "板块", "D0_date", "D0_rule", "D0_close",
+                     "移动止损", "止损状态", "prior_14d_signal_dates"]
     sector_map = sector_map or {}
 
     out_rows: dict[str, list[dict]] = {}
@@ -631,6 +700,18 @@ def _build_followup_sheets(
                 "prior_14d_signal_dates": format_prior_signal_dates(prior_dates),
                 "retrigger_dates": ", ".join([x.isoformat() for x in retrigs]) if retrigs else "",
             }
+            if add_trail_stop:
+                ts = compute_trailing_stop(ohlc_cache.get(sym), base_loc, latest_loc)
+                if ts is None:
+                    row["移动止损"] = np.nan
+                    row["止损状态"] = ""
+                elif ts["breached"]:
+                    bd = pd.to_datetime(ts["breach_date"]).date().isoformat() if ts["breach_date"] is not None else ""
+                    row["移动止损"] = round(ts["stop"], 4)
+                    row["止损状态"] = f"止损触发 {bd}"
+                else:
+                    row["移动止损"] = round(ts["stop"], 4)
+                    row["止损状态"] = "持有"
             for i in range(1, max_days + 1):
                 if i <= max_available and (base_loc + i) < len(dates):
                     di_date = dates[base_loc + i]
@@ -847,6 +928,50 @@ def _has_recent_signal(snapshot: dict, signal_type: str, max_bdays: int, as_of_d
         if 0 <= days <= max_bdays:
             return True
     return False
+
+
+def build_combo_regime(tickers=("SPY", "QQQ")) -> list:
+    """EOD regime readout for the COMBO swing strategy (#24, see tradingview_scripts/RESEARCH.md
+    and reports/swing_strategy_2026-06-19.md). Each index vs its 200-day SMA (3-day confirm):
+    above = HOLD (uptrend); below = MR-bounce regime. This is the LONG-TERM trend regime — distinct
+    from the short-term Gann scan signals (a 'QQQ daily sell' can fire while the 200d regime is bull)."""
+    lines = []
+    for tk in tickers:
+        try:
+            df = download_daily(tk, period="3y")
+        except Exception:
+            df = None
+        if df is None or len(df) < 220:
+            lines.append(f"   {tk}: 数据不足，跳过")
+            continue
+        C = df["Close"].astype(float)
+        sma200 = C.rolling(200).mean()
+        last = float(C.iloc[-1]); s200 = float(sma200.iloc[-1])
+        confirm3 = bool((C > sma200).iloc[-3:].all())
+        slope = float(sma200.iloc[-1] / sma200.iloc[-22] - 1) * 100
+        dd = float(last / C.iloc[-252:].max() - 1) * 100
+        vol30 = float(C.pct_change().iloc[-30:].std() * (252 ** 0.5) * 100)
+        d = C.diff(); up = d.clip(lower=0); dn = -d.clip(upper=0)
+        rs = up.ewm(alpha=0.5, adjust=False).mean() / dn.ewm(alpha=0.5, adjust=False).mean()
+        r2 = float((100 - 100 / (1 + rs)).iloc[-1])
+        if last > s200 and slope > 0 and dd > -5:
+            regime = "强势/纯牛市(持有为主,MR待命)"
+        elif last > s200 and slope > 0:
+            regime = "上升趋势(牛市回调)" if dd < -5 else "上升趋势"
+        elif last < s200 and slope < 0:
+            regime = "熊市/避险(MR反弹区)"
+        else:
+            regime = "过渡/震荡(200日线附近)"
+        if confirm3 and last > s200:
+            action = "HOLD 持有(满仓指数)"
+        elif last < s200:
+            action = f"MR反弹待命—今日RSI2={r2:.0f}(<10则买反弹,否则现金)"
+        else:
+            action = "观望/现金(200日上方但未满3日确认)"
+        lines.append(
+            f"   {tk}: 收{last:.2f} / 200日{s200:.2f}({'上' if last > s200 else '下'},确认{confirm3}) | "
+            f"距52周高{dd:+.1f}% | 30日波动{vol30:.0f}% | {regime} → {action}")
+    return lines
 
 
 def build_market_context(run_dt: datetime) -> dict:
@@ -2001,7 +2126,7 @@ def export_tv_buy_signal_notes(
         notes_content = "# No buy signals today\n"
     else:
         rows = buy_followup_df.copy()
-        for col in ["symbol", "板块", "D0_date", "D0_rule", "D0_close", "观海买点分"]:
+        for col in ["symbol", "板块", "D0_date", "D0_rule", "D0_close", "观海买点分", "移动止损", "止损状态"]:
             if col not in rows.columns:
                 rows[col] = ""
         rows["symbol"] = rows["symbol"].astype(str).str.strip().str.upper()
@@ -2013,7 +2138,7 @@ def export_tv_buy_signal_notes(
         pure_lines = []
         note_lines = [
             f"# {date_str} 当日买入触发样本",
-            "# 格式：TradingView代码 | 触发日期 | 观海买点分 | 触发规则 | 板块 | D0_close",
+            "# 格式：TradingView代码 | 触发日期 | 观海买点分 | 触发规则 | 板块 | D0_close | 移动止损(5×ATR22) | 止损状态",
         ]
         for _, r in rows.iterrows():
             symbol = str(r["symbol"]).strip().upper()
@@ -2023,9 +2148,12 @@ def export_tv_buy_signal_notes(
             pure_lines.append(tv_symbol)
             score = r.get("观海买点分", np.nan)
             score_txt = "" if pd.isna(score) else f"{float(score):.0f}"
+            trail_val = pd.to_numeric(r.get("移动止损", np.nan), errors="coerce")
+            trail_txt = "" if pd.isna(trail_val) else f"{float(trail_val):.2f}"
             note_lines.append(
                 f"{tv_symbol} | {r.get('D0_date', '')} | {score_txt} | "
-                f"{_rule_text_for_tv(r.get('D0_rule', ''))} | {r.get('板块', '')} | {r.get('D0_close', '')}"
+                f"{_rule_text_for_tv(r.get('D0_rule', ''))} | {r.get('板块', '')} | {r.get('D0_close', '')} | "
+                f"{trail_txt} | {r.get('止损状态', '')}"
             )
 
         pure_content = "\n".join(pure_lines) + ("\n" if pure_lines else "")
@@ -2824,6 +2952,8 @@ def scan_one_symbol(sym, name, xl: XunLongIndicator, *, daily_fetcher=None, h4_f
     recent_window = max(V1_LOOKBACK_DAYS, V2_LOOKBACK_DAYS, GANN_LOOKBACK_DAYS)
     recent_index = df_all.tail(recent_window).index
     daily_recent_mask = df_all.index.isin(recent_index)
+    # ATR(22) on the daily frame -> day-of initial 5xATR trailing stop for 正式买入
+    atr22_series = _atr_wilder(df_d["High"], df_d["Low"], df_d["Close"], EXIT_TRAIL_ATR_LEN).reindex(df_all.index)
 
     def append_signal(idx, row, signal_type, signal_side, model, extra_info):
         gann_1_date = pd.to_datetime(row.get("Gann_1_date", pd.NaT), errors="coerce")
@@ -2882,9 +3012,13 @@ def scan_one_symbol(sym, name, xl: XunLongIndicator, *, daily_fetcher=None, h4_f
     if "Gann_BUY_A" in df_all.columns:
         recent = df_all[df_all["Gann_BUY_A"].fillna(False).astype(bool) & daily_recent_mask]
         for idx, row in recent.iterrows():
+            _atr0 = atr22_series.get(idx, np.nan)
+            _stop0 = (row["Close"] - EXIT_TRAIL_ATR_MULT * _atr0) if pd.notna(_atr0) else np.nan
+            _stop_txt = f"{_stop0:.2f}" if pd.notna(_stop0) else "n/a"
             append_signal(
                 idx, row, "正式买入", "BUY", "D1_BUY_A_0出",
-                f"日线0出; Gann0={row.get('Gann_0', np.nan):.2f}; Gann1预览={row.get('Gann_1', np.nan):.2f}; 段涨幅={row.get('Gann_gain_pct', np.nan):.2%}"
+                f"日线0出; Gann0={row.get('Gann_0', np.nan):.2f}; Gann1预览={row.get('Gann_1', np.nan):.2f}; "
+                f"段涨幅={row.get('Gann_gain_pct', np.nan):.2%}; 初始止损(5×ATR22)={_stop_txt}"
             )
 
     # 预警卖出：4H 1出
@@ -3123,7 +3257,7 @@ def main():
     buy_anchors = _extract_anchor_signals(history_source_dir, df_all, signal_side="BUY")
     buy_anchors = _drop_symbols(buy_anchors, excluded_symbols)
     followup_sheets, completed_sheets = _build_followup_sheets(
-        buy_anchors, now, max_days=TRACK_MAX_DAYS, sector_map=sector_map_all
+        buy_anchors, now, max_days=TRACK_MAX_DAYS, sector_map=sector_map_all, add_trail_stop=True
     )
     sell_anchors = _extract_anchor_signals(history_source_dir, df_all, signal_side="SELL")
     sell_anchors = _drop_symbols(sell_anchors, excluded_symbols)
@@ -3181,6 +3315,12 @@ def main():
             f"✅ 市场环境：{today_market_context.get('state')} | {today_market_context.get('daily_reason')}",
             flush=True,
         )
+    try:
+        print("✅ COMBO波段regime (#24, 长线200日趋势; 与短线信号不同):", flush=True)
+        for _ln in build_combo_regime():
+            print(_ln, flush=True)
+    except Exception as _exc:
+        print(f"⚠️ COMBO regime 读取失败：{_exc}", flush=True)
 
     archived_files = []
     for dt_key in combined_completed_dates:

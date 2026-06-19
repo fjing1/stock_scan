@@ -39,6 +39,12 @@ against the trading literature.
   tight exit can give 90% wins yet make no money).
 - **Honesty about multiplicity:** searching N combos guarantees in-sample winners;
   only OOS persistence + economic coherence counts. Sample sizes and z-scores reported.
+- **Walk-forward verdict (adopted #21):** the single 2019 split is a useful first screen but
+  fragile, so cross-sectional results are now also judged by rolling-origin walk-forward (refit
+  on a trailing window with a 1-week embargo, stitch all test windows into one OOS curve), a
+  **recent-3y** readout (regimes change — 2007–18's market/players/tech ≠ now), and overfit
+  haircuts: **Deflated Sharpe** (discount for the N configs tried) + **PBO/CSCV** (is the
+  in-sample-best config overfit). A result must clear the haircut, not just one cut's OOS.
 
 ## 4. Experiments & findings
 
@@ -61,6 +67,13 @@ against the trading literature.
 | 15 | Analyst-revision momentum (free, non-price)? | `revision_alpha.py` | ❌ orthogonal (corr≈0) but **negative** OOS — ratings lag price; adding it hurt |
 | 16 | Sector rotation — "sector A up → B next"? | `sector_rotation.py` | ❌ no clean lead-lag (weak & negative); momentum rotation ≈ market; real rotation is macro-regime-driven |
 | 17 | Macro risk-on/off regime timing (Yahoo proxies)? | `macro_regime.py` | ❌ no edge — regime doesn't predict returns; risk-off timing cuts maxDD but lowers Sharpe; cyc/def inverted (mean-reversion). Official FRED test pending restart |
+| 18 | Residual (factor-neutral) momentum — beats raw 12-1? | `residual_momentum.py` | ⚠️ in-sample crash-protection **replicates** (LS maxDD −65%→−22%, β≈0) but **no net OOS edge** — IR-form churns 78–163%; raw long-only wins OOS |
+| 19 | Post-earnings drift (PEAD) — orthogonal event alpha? | `pead_drift.py` | ✅ **real & OOS-persistent** — Q5−Q1 surprise drift +2.25%→**+3.05%** (63d, train→test); low-turnover (14%) overlay net Sharpe **0.27** OOS, β≈0 → the orthogonal leg to STACK on #12 |
+| 20 | Stack PEAD onto the #12 ensemble — does orthogonality pay? | `pead_stack.py` | ❌ **no reliable lift** — score-stack −0.05 test; 50/50 sleeve +0.15 test but −0.10 train; PEAD is period-concentrated (weak pre-2019). Keep 4-alpha+buffer |
+| 21 | Is the static 2019 split right? Walk-forward + overfit haircuts | `walkforward.py` | ⚠️ rolling-origin OOS + DSR/PBO. Equal-weight robust (OOS ~0.37, recent-3y 0.73); adaptive weighting needs a ≥4–6mo window and **fails the haircut** (DSR 0.78, PBO 0.65) → config selection is overfit |
+| 22 | Is SMA200 the best trend filter? (1–200 sweep + fib/EMA) | `ma_filter_sweep.py`, `ma_length_curve.py` | ✅ **No — 200 is too long.** Edge peaks at the ~85d MA (OOS ~0.9%/trade vs 0.55% at 200) and the **50>200 regime-cross** (t 4.7, DSR 1.00); fib & EMA show no magic; dead-zone n≈10–55. Scanner filter → SMA50>SMA200 (+ Close>SMA85 hi-conv tier) |
+| 23 | Does a 15/30/60m intraday confirmation improve the daily entry? | `mtf_intraday_test.py` | ~ **weak/indicative** — 60m (2yr, n=1219): confirmed +0.29% vs unconfirmed −1.11% (Δ+1.4pp, t 2.2); 15m directional (70% vs 52% win, t 1.2, n 46); 30m null. A timing overlay (`dip_scan --confirm-tf`), not a proven edge |
+| 24 | Regime-switch (hold uptrend + MR-bounce downtrend) vs buy&hold over a FULL cycle (2000-26)? | `_swing_research.py`, `_swing_basket.py` (Stock_OneClick/backend); report `Stock_OneClick/reports/swing_strategy_2026-06-19.md` | ✅ **on the INDEX** — COMBO beats B&H: SPY 6.4%/Sharpe 0.50/−29%DD vs 6.4%/0.42/−56%; QQQ 9.8%/0.56/−56% vs 8.2%/0.43/−83%. ❌ on a survivor large-cap stock basket (B&H wins 11.7% vs 5.2% — survivorship = no bear pain). MR best-practice (Connors/Alvarez/Faber/Pagonidis 2013): RSI2<5 & IBS<0.2 entry, **first-up-close exit**, MR only in regime; reversal decayed post-2010 |
 
 ### Key results
 
@@ -112,6 +125,22 @@ trend-following exits, momentum entries DO make money: MACD-cross + 63-day hold 
 for every momentum combo — these capture **market beta over a multi-month hold, not a
 timing edge**. Only the mean-reversion dip-in-uptrend shows true alpha (detrended
 ~56–60%). Lesson: absolute PF can hide beta; judge on excess return.
+
+**Regime-switch beats buy-&-hold — but only on the index (24).** The dip-in-uptrend edge
+(4–11) is cash in bears; this asks whether a full strategy can beat *buy-and-hold* over a
+cycle that includes 2000–02 and 2008. The **COMBO** — hold the index when above its 200-day
+SMA (Faber, 3-day confirm), and trade short MR bounces (RSI2<10, exit first up-close / 10d)
+when below, instead of cash — does, on **SPY/QQQ**: SPY 2000–26 CAGR 6.4% / Sharpe 0.50 /
+MaxDD −29% vs B&H 6.4% / 0.42 / −56%; QQQ 9.8% / 0.56 / −56% vs 8.2% / 0.43 / −83%. The edge is
+crash-protection + bear-bounce harvesting (+2.4% SPY in 2000–09 while B&H lost −2.7%); it lags
+in the uninterrupted 2010s bull (the insurance premium). **It does NOT beat B&H on a survivor
+large-cap stock basket** (40 names: B&H 11.7% vs COMBO 5.2%) — survivorship means the basket
+never had the bear pain to protect against, and the trend filter's cash-drag guts bull returns.
+So swing/MR + trend-timing belongs on the **broad index**, not hand-picked stocks. MR rules are
+research best-practice (Connors/Alvarez: RSI2 oversold + IBS<0.2, first-up-close exit, stops hurt
+MR; Faber trend-timing for the drawdown win; Pagonidis 2013 / Pandey&Joshi 2023 for the IBS edge).
+Honest caveat: short-term reversal has decayed post-2010, so the bear sleeve is weaker going
+forward. Encoded as the **COMBO mode** in `dip_in_uptrend_strategy.pine`.
 
 ## 4b. Principles from elite quant practice (Citadel / RenTec / Two Sigma)
 
@@ -178,20 +207,143 @@ CHANGES, not the stronger EPS-estimate revisions. This settles the frontier: the
 orthogonal option is exhausted — real further alpha needs EPS-estimate revisions,
 point-in-time fundamentals, and a survivorship-free universe (not available via Yahoo).
 
+**Residual (factor-neutral) momentum — crash-protection replicates, net edge doesn't (18).**
+*Surfaced by the `research-ideas` agentic workflow as the #1 mature, replicated, NEW-to-repo
+edge.* Plain 12-1 momentum (the ensemble's #12 leg) carries factor/beta tilt that drives the
+notorious momentum crashes; residual momentum (Blitz–Huij–Martens 2011) regresses each name's
+daily returns on 3 factor proxies (market = SPY, size = IWM−SPY, value = IWD−IWF), ranks the
+**IR-scaled cumulative residual** (skip 1mo), and trades the top/bottom-quintile spread vs the
+RAW 12-1 baseline through an identical engine. **In-sample, the literature's headline benefit
+replicates cleanly:** the factor-neutral long-short halves drawdown (train maxDD raw −65% →
+residual −22%) and flips raw's ~zero train alpha positive (LS Sharpe −0.13 → +0.37), β≈0.
+**But out-of-sample (2019→, incl. 2022) the edge does not survive costs.** The IR-scaling
+re-ranks violently — turnover 78%/wk and a runaway 163%/mo — so net-of-cost LS Sharpe is
+0.15 (weekly) / −0.11 (monthly), and the long-only top-quintile alpha vs SPY is *lower* than
+raw momentum's OOS (+12.7% vs +20.8% weekly). Raw long-only momentum remains the stronger
+deployable signal on this survivorship-biased OHLCV universe. This **confirms #14's verdict**:
+the easy OHLCV cross-sectional alphas are exhausted — residual momentum's edge is real in-
+sample but gets decayed/churned away net. Open levers before shelving: a non-IR (plain
+cumulative-residual) score to cut churn, the #13 rebalance buffer, and a point-in-time
+universe. `python residual_momentum.py [--rebal 5|21] [--names N]`.
+
+**Post-earnings-announcement drift (PEAD) — the orthogonal alpha that holds up (19).**
+*Chosen as the follow-up to #18 because #14/#15 said the binding constraint is NEW data
+orthogonal to price.* PEAD is driven by the EARNINGS SURPRISE (a fundamental/event signal,
+not OHLCV). Realized analyst surprises ARE reachable via yfinance's earnings-dates endpoint
+with enough depth for OOS (AAPL to 2005; **10,856 surprise records across 135/136 names**;
+needs `lxml` + the `guce.yahoo.com`/`consent.yahoo.com` allowlist — see the apple sandbox CSV).
+**Event study (9,232 tradable events, entry the session AFTER the announce so it's tradable,
+drift detrended vs SPY):** the top-minus-bottom surprise-quintile drift is **+0.67% → +2.25%**
+over +21d → +63d in TRAIN and **+0.95% → +3.05%** in TEST — i.e. it ACCUMULATES over the
+quarter (as Bernard–Thomas predict) and STRENGTHENS out-of-sample; in test the miss-quintile
+(Q1) turns negative, the clean PEAD signature. **Tradable overlay** (a name is "in play" for
+63 trading days post-report, weekly long-top/short-bottom-surprise-quintile): long-short net
+Sharpe **0.05 train → 0.27 test**, β −0.01/+0.15, and crucially **turnover is only 14–16%**
+(quarterly events rotate slowly) — so costs barely dent it, the opposite of #18's churn. As a
+standalone long-short it's modest, but it is the **low-turnover, orthogonal, OOS-persistent**
+leg #14 said was missing. **Recommended next build: stack PEAD as a new alpha in the #12
+ensemble** (event-driven ⇒ ~uncorrelated to the price alphas) and/or tilt the dip-scanner
+toward names with a recent positive surprise. CAVEAT: survivorship inflates the long leg and
+analyst-surprise is weaker than SUE/estimate-revisions — treat magnitudes as a lower bound;
+trust the quintile monotonicity, OOS persistence, and β≈0. `python pead_drift.py [--names N]`.
+
+**Stacking PEAD onto the ensemble — orthogonality didn't reliably pay (20).** Added the #19
+PEAD leg to the validated 4-alpha blend under the #13 buffer config, two ways. The base
+reproduces ~0.5 net Sharpe (train 0.45 / test 0.53, β 0.03). PEAD's spread is only **+0.19**
+correlated to the 4-alpha spread — the diversifier #14 asked for — yet **neither combination
+lifts net Sharpe in BOTH windows**: (a) *score-stacking* (z-sum into one ranking) gives
+train +0.03 / **test −0.05** — a sparse signal just perturbs the ranking at the margin
+(echoes #14); (b) the correct *sleeve* combination (hold PEAD as its own book, blend net
+returns 50/50) gives **test 0.53→0.69 (+0.15)** but **train 0.45→0.35 (−0.10)**. The split is
+the lesson: PEAD's *tradable* net Sharpe is strong in test (0.53) but weak pre-2019 (0.05) —
+**period-concentrated**, so it can't raise the combined Sharpe across both windows even though
+the drift itself persists (#19). By the house rule (persist in train AND test), the **4-alpha
++ buffer remains the production config**; PEAD is better used as a **long-only tilt** in the
+dip-scanner (its test long-only alpha is +12%/yr at low turnover) than as an ensemble leg. The
+binding constraint is now clearly the survivorship universe + new-alpha period-concentration,
+not a shortage of orthogonal signals. `python pead_stack.py [--names N]`.
+
+**Walk-forward beats the static split — and the haircuts kill the "adaptive" edge (21).**
+The single 2019 split is fragile (arbitrary cut; lumps very different regimes into one "test")
+and 2007–18 may not represent how the market trades now. Replaced it with rolling-origin
+walk-forward: each step refit sleeve weights on a trailing window (1-week embargo so the 5-day
+forward label can't leak), hold over the next window, and STITCH every test window into one
+full-power OOS curve. Two things fell out. (a) **Window length matters and short is bad:** a
+4-week train window *breaks* adaptive weighting (OOS Sharpe −0.08 vs +0.37 equal — refitting on
+~4 returns just chases last month's winner); adaptive (trailing-Sharpe / max-Sharpe) only beats
+equal once the window is ≥17–26 weeks (4–6mo). **Equal-weight is robust everywhere** (0.29–0.41)
+because it estimates nothing. (b) **The recent regime really is better:** recent-3y Sharpe is
+0.73 (equal), up to ~1.0–1.4 (adaptive at the right window) vs the full-history 0.37 — a single
+2019 split buries this. BUT the rigor haircuts settle it: over the **N=18 configs tried**, the
+best config's **Deflated Sharpe is 0.78** (< 0.95 → NOT significant once you account for the
+search) and **PBO (CSCV, 924 combos) is 0.65** (HIGH — the in-sample-best config lands below the
+OOS median two-thirds of the time). **Verdict:** only *static equal-weight* (no fitting, no
+selection) survives the haircut; adaptive weighting and window-picking are overfit on this
+survivorship universe — which reinforces #14. The recent strength is real but **regime-driven,
+not from clever weighting**. Adopt walk-forward + a recent-window readout + DSR/PBO as the
+verdict mechanism going forward (see §3). `python walkforward.py [--names N]`.
+
+**Is SMA200 the best trend filter? No — it's too long; the edge is a regime, not a number (22).**
+#4 used Close>SMA200; this stress-tested it by holding the oversold entry + 10d exit fixed and
+varying ONLY the trend filter. Three passes: (a) a discrete sweep of lengths/types/stacks; (b)
+Fibonacci lengths + EMA; (c) an exhaustive 1..200 length curve (SMA & EMA). Findings, all
+detrended-vs-SPY, OOS 2019+: **(1) the regime-CROSS shape wins** — `SMA50>SMA200` (golden cross)
+is the most robust filter (OOS +0.67%/trade, t **4.7**, 2,893 signals, **DSR 1.00**, barely
+degrades train→test) and beats `Close>SMA200` (+0.55%, t 3.0, *halves* train→test). **(2)
+Fibonacci is not special** — the fib golden cross `SMA89>SMA233` (+0.62) ties the round
+`SMA50>SMA200`, and fib price-above filters land on the same curve as nearby round numbers.
+**(3) EMA is a wash** — EMA variants score within noise of SMA. **(4) The length curve is a
+broad hump:** a *dead zone* at n≈10–55 (you can't be deeply oversold AND above a short MA — ~0
+signals), a peak at **n≈75–100** (Close>SMA~85 gives the highest per-trade edge, ~+0.9%/trade vs
++0.55% at 200, and is *more* stable train→test), then a gentle fade to 200. **(5) Rigor:** the
+single best length has **DSR 0.89** (not uniquely significant) — read it as a *band* (~80–100),
+not a magic number; the "winner" C>SMA55 (+1.5% OOS) was a 119-trade fluke (negative in train)
+that the persistence+DSR guard correctly discarded. **Deployed (dip_scan.py):** the gate is now
+the robust `SMA50>SMA200` regime cross (catches good dips that briefly pierce the 200-day; the
+ranking de-prioritizes weak ones), with `Close>SMA85` surfaced as a `hi_conv` tier (the per-trade
+sweet spot). `--legacy-trend` restores `Close>SMA200`. `python ma_filter_sweep.py` /
+`python ma_length_curve.py`.
+
+**Multi-timeframe intraday confirmation — weak-but-real on 60m, data-walled on 15/30m (23).**
+Re-opened the question "use 15/30m for better entries" with the current daily signal. Among
+daily dip signals, split by whether the NEXT session shows an intraday strong-up bar (the
+dip_scan conf rule) and compared the daily +10d detrended forward return of confirmed vs
+unconfirmed. Result depends entirely on the timeframe's available history: **60m has ~2 yrs
+(n=1,219) and shows a mild, marginally-significant lift** — confirmed +0.29% vs unconfirmed
+**−1.11%** (Δ +1.4pp, t **2.2**, win 50% vs 44%); the value is mostly in AVOIDING the
+unconfirmed dips ("nobody bought it intraday → it keeps bleeding"). **15m is only 60 days
+(n=46)**: directionally strong (70% vs 52% win, +5.1% vs +1.5%) but t **1.2** — i.e. exactly
+#8's weak/unproven situation. **30m is null** (t −0.1). Caveats: 3 timeframes tested (multiple-
+testing would haircut the 60m t≈2.2 toward marginal), single ~2yr regime, survivorship. EXIT
+is unchanged from #9 (a 15m sell-bar exit was harmful; a proper intraday-exit test is blocked
+by the 60-day data wall for the ~2-week hold). **Verdict:** intraday confirmation is a sensible
+LIVE timing overlay, not a proven backtested edge — deployed in `dip_scan.py` as
+`--confirm-tf 15m|30m|60m` (60m is the best-powered choice; confirmed hits sort first).
+`python mtf_intraday_test.py [--names N]`.
+
 ## 5. The resulting system
 
 ```
-ENTRY  : Close > SMA200  AND  RSI(14) < 40  AND  Stoch %K(10,EMA4) < 20   (daily)
+ENTRY  : SMA50 > SMA200 (up-regime, #22)  AND  RSI(14) < 40  AND  Stoch %K(10,EMA4) < 20  (daily)
+         hi_conv tier = also Close > SMA85 (the ~85-day per-trade-edge peak); --legacy-trend = Close>SMA200
 RANK   : DipRank = 0.45·(12m return) + 0.30·(pullback below MA50) + 0.25·(% above MA200)
-CONFIRM: optional — a strong up 15m candle on >=1.5x avg volume that session
+TILT   : DipRank_PEAD = DipRank ± up to 12 pts by recent earnings-surprise percentile
+         (#19/#20 long-only PEAD tilt; in-play = reported within ~63 trading days)
+CONFIRM: optional — a strong up intraday candle on >=1.5x avg volume next session
+         (#23, --confirm-tf 15m/30m/60m; 60m best-powered, weak/indicative edge)
 EXIT   : close >= SMA20  (or Stoch %K >= 70, or RSI(2) >= 70)   — sell into strength
 STOP   : none tight (they hurt); >MA200 is the risk control. Optional wide disaster stop.
 HOLD   : ~1–3 weeks
 ```
 
-- TradingView: `dip_in_uptrend.pine` (indicator, BUY/SELL markers + status table),
-  `dip_in_uptrend_strategy.pine` (Strategy Tester: win rate / profit factor / equity).
-- Scanner: `dip_scan.py` → ranked dated CSV in `results/<YYYYMMDD>/`.
+- TradingView: `dip_in_uptrend.pine` (indicator — #22 regime filter SMA50>SMA200 with the
+  Close>SMA85 hi-conv tier, BUY/BUY★/SELL markers, PEAD earnings-surprise label + status table),
+  `dip_in_uptrend_strategy.pine` (Strategy Tester: win rate / profit factor / equity, with
+  optional hi-conv and earnings-beat entry filters). `--legacy` Close>SMA200 selectable in both.
+- Scanner: `dip_scan.py` → ranked dated CSV in `results/<YYYYMMDD>/`. Ranks by `DipRank_PEAD`
+  (DipRank with the #19/#20 earnings-surprise tilt; `--no-pead` to disable), surfaces a `hi_conv`
+  tier (#22) and an optional intraday confirmation (`--confirm-tf 15m/30m/60m`, #23), and reports
+  each hit's recent `earn_surprise` / `earn_age_d`.
 - Sector overlay: `sector_confirm.py` → given a stock, scores its industry's trend
   (sector SPDR + thematic ETF + peer breadth) so a dip-buy is only high-conviction
   when the whole industry is healthy. Verdict tiers: STRONG / CONSTRUCTIVE (uptrend
@@ -210,6 +362,13 @@ HOLD   : ~1–3 weeks
 - `entry_sweep.py` — broad entry-indicator library (32 variants, OOS)
 - `momentum_exit_sweep.py` — momentum entries × trend-following exits (beta check)
 - `market_neutral_ensemble.py` — cross-sectional long-short alpha ensemble
+- `residual_momentum.py` — residual (factor-neutral) vs raw 12-1 momentum (workflow-surfaced; in-sample only)
+- `pead_drift.py` — post-earnings-announcement-drift event study + tradable overlay (orthogonal event alpha; OOS-persistent)
+- `pead_stack.py` — stack PEAD onto the #12 ensemble (score-stack + 50/50 sleeve); no reliable both-window lift
+- `walkforward.py` — rolling-origin walk-forward + Deflated-Sharpe & PBO/CSCV overfit haircuts (the #21 verdict harness)
+- `ma_filter_sweep.py` — trend-filter comparison (lengths, types, stacks, fib, EMA) for #22
+- `ma_length_curve.py` — exhaustive 1..200 MA-length edge curve (SMA & EMA) for #22
+- `mtf_intraday_test.py` — multi-timeframe (15/30/60m) intraday entry-confirmation test for #23
 - `mn_turnover.py` — turnover-reduction pass (buffer/smoothing/frequency)
 - `alpha_stack.py` — multi-alpha stacking + sector-neutralization (8 alphas)
 - `revision_alpha.py` — analyst-revision-momentum (non-price) alpha test
@@ -223,7 +382,8 @@ HOLD   : ~1–3 weeks
 
 **Deliverables**
 - `dip_in_uptrend.pine`, `dip_in_uptrend_strategy.pine` — TradingView
-- `dip_scan.py` — universe scanner with DipRank + 15m confirmation
+- `dip_scan.py` — universe scanner: #22 regime filter (SMA50>SMA200, +SMA85 hi-conv) + DipRank + PEAD tilt + 15m confirm
+- `position_advisor.py` — per-holding HOLD/TRIM/SELL read for one ticker (trend + swing + PEAD + sector)
 - `sector_confirm.py` — top-down sector/industry trend confirmation overlay
 
 ## 7. Limitations
@@ -251,10 +411,15 @@ HOLD   : ~1–3 weeks
   size by volatility — targets alpha directly and is the highest-value upgrade.
   *Status: built (#12), turnover-tuned (#13), alpha-stacking explored (#14).
   Recommended config = balanced 4-alpha + rebalance buffer (~0.5 net Sharpe, β≈0).*
-- **New orthogonal data** is now the binding constraint: OHLCV cross-sectional alphas
-  are exhausted (#14). Real Sharpe lift needs fundamentals / earnings & analyst
-  revisions / alt-data, plus a **point-in-time, survivorship-free universe** (CRSP /
-  Sharadar / Norgate) — neither available via Yahoo.
+- **New orthogonal data** is the binding constraint for OHLCV alphas (#14). **Update (#19/#20):
+  realized earnings surprises ARE reachable via Yahoo with OOS depth, and PEAD is a real,
+  OOS-persistent, low-turnover, orthogonal alpha — but stacking it onto the #12 ensemble did
+  NOT reliably lift net Sharpe in both windows (#20: PEAD is period-concentrated, strong post-
+  2019, weak before).** So the production config stays 4-alpha + buffer; PEAD is best deployed
+  as a long-only TILT in the dip-scanner (recent positive surprise), not as an ensemble leg.
+  Open: SUE/standardized surprise, and a point-in-time universe to retest #20 without the
+  period/survivorship confounds. Estimate *revisions* and PIT fundamentals remain unavailable
+  via Yahoo (#15).
 
 ## 9. Reproduce
 
