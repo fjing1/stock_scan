@@ -3,7 +3,8 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, time as dtime
+from zoneinfo import ZoneInfo
 import subprocess
 import traceback
 import shutil
@@ -322,21 +323,33 @@ def _read_signal_rows_from_result(path: Path, signal_side: str) -> pd.DataFrame:
     return out
 
 
+# The persisted signal schema. RawSignals in history/ IS the system's long-term
+# memory: the lifecycle tracking and the 第一观察点 tracker read these columns back
+# out of old workbooks. Keep ONE list — when the writer's list and main()'s
+# projection drifted apart, columns were computed and then silently dropped on the
+# way to disk (that is why `low` was missing before 2026-07-06 and the tracker
+# could not judge 59 of 83 observations).
+SIGNAL_COL_ORDER = [
+    "run_date", "run_time",
+    "symbol", "name", "板块",
+    "signal_date", "signal_type", "signal_side", "model",
+    "close", "low", "volume", "vol_ma20",
+    "L2_trend", "L2_pump", "RSI",
+    "rank120", "H4_RSI", "H4_FJ", "H4_0_birth", "H4_1_birth",
+    "Gann_1_date", "Gann_1_price", "Gann_0", "Gann_gain_pct",
+    "buy_score", "buy_score_raw", "sell_score", "extra_info",
+    # 该行的价格是否来自尚未收盘的日线（盘中运行）。生命周期买入价会优先用
+    # bar_partial=False 的那一版，避免把盘中最新价固化成成交价。
+    "bar_partial",
+]
+
+
 def _write_raw_signals_sheet(writer, df_all: pd.DataFrame):
-    raw_cols = [
-        "run_date", "run_time",
-        "symbol", "name", "板块",
-        "signal_date", "signal_type", "signal_side", "model",
-        "close", "volume", "vol_ma20",
-        "L2_trend", "L2_pump", "RSI",
-        "rank120", "H4_RSI", "H4_FJ", "H4_0_birth", "H4_1_birth",
-        "Gann_1_date", "Gann_1_price", "buy_score", "sell_score", "extra_info",
-    ]
     raw_df = df_all.copy() if df_all is not None else pd.DataFrame()
-    for c in raw_cols:
+    for c in SIGNAL_COL_ORDER:
         if c not in raw_df.columns:
             raw_df[c] = np.nan
-    raw_df = raw_df[raw_cols]
+    raw_df = raw_df[SIGNAL_COL_ORDER]
     raw_df.to_excel(writer, sheet_name="RawSignals", index=False)
 
 
@@ -419,7 +432,7 @@ tr:hover { background: #f8fbff; }
 <body>
 <div class=\"wrap\">
 <h1>XL Signal Dashboard</h1>
-<div class=\"sub\">Run: {run_time} · 第一买入点=低位首绿柱 · 二进宫买入点=回踩不破后再次绿柱 · 预警买入=4H BUY A/0出 · 正式买入=日线 BUY A/0出 · 预警卖出=4H 1出 · 正式卖出=日线 1出</div>
+<div class=\"sub\">Run: {run_time} · 第一观察点=低位首绿柱(预备观察) · 二进宫买入点=回踩不破后再次绿柱 · 预警买入=4H BUY A/0出 · 正式买入=日线 BUY A/0出 · 预警卖出=4H 1出 · 正式卖出=日线 1出</div>
 <table>
 <thead><tr>
 <th>方向</th><th>日期</th><th>代码</th><th>名称</th><th>板块</th><th>信号</th><th>模型</th>
@@ -461,10 +474,58 @@ def _recent_history_result_map(history_dir: Path, run_dt: datetime, max_days: in
     return out
 
 
-def _get_catchup_signal_dates(history_dir: Path, run_dt: datetime, max_bdays: int = 5) -> list:
+MARKET_TZ = ZoneInfo("America/New_York")
+MARKET_CLOSE_ET = dtime(16, 0)
+SESSION_REFERENCE_SYMBOL = "SPY"
+
+
+def resolve_session_state(run_dt: datetime, reference_symbol: str = SESSION_REFERENCE_SYMBOL) -> dict:
+    """
+    用真实行情（参考标的最后一根日线）确定本次扫描的“信号基准交易日”，而不是用挂钟日期。
+
+    两种挂钟日期会骗人：
+    1) 周末/假日运行——挂钟日期不是交易日，信号其实产生在最后一根完整日线上。
+       以前用挂钟日期做 catchup 上界，会把当次算出的信号整批过滤掉。
+    2) 盘中运行——最后一根日线还没收盘，close/volume 只是当时的最新值（临时价）。
+
+    返回 {session_date, wall_date, is_partial, is_trading_day, source}。
+    session_date 为 None 表示拿不到参考行情，调用方应回退到挂钟日期。
+    """
+    wall_date = run_dt.date()
+    try:
+        ref = download_daily(reference_symbol, period="1y")
+    except Exception as exc:
+        print(f"⚠️ 基准交易日探测失败（{reference_symbol}: {exc}），回退到挂钟日期 {wall_date}", flush=True)
+        ref = None
+    if ref is None or ref.empty:
+        if ref is not None:
+            print(f"⚠️ 基准标的 {reference_symbol} 无数据，回退到挂钟日期 {wall_date}", flush=True)
+        return {
+            "session_date": None, "wall_date": wall_date, "is_partial": False,
+            "is_trading_day": True, "source": "fallback",
+        }
+
+    session_date = pd.Timestamp(ref.index[-1]).date()
+    now_et = run_dt.astimezone(MARKET_TZ)
+    is_partial = (session_date == now_et.date()) and (now_et.time() < MARKET_CLOSE_ET)
+    return {
+        "session_date": session_date,
+        "wall_date": wall_date,
+        "is_partial": bool(is_partial),
+        "is_trading_day": session_date == wall_date,
+        "source": reference_symbol,
+    }
+
+
+def _get_catchup_signal_dates(history_dir: Path, run_dt: datetime, max_bdays: int = 5,
+                              anchor_date=None) -> list:
     """
     根据上一次成功扫描日期，自动补回遗漏的交易日信号。
     例如上次跑在 3/12，本次跑在 3/17，则补回 [3/13, 3/16, 3/17]。
+
+    anchor_date = 本次信号的基准交易日（最后一根日线的日期，见 resolve_session_state）。
+    周末/假日运行时它早于挂钟日期，必须用它做上界；否则当次算出的信号（日期=最后一个
+    交易日）会被整批过滤掉，Summary / dashboard / tv 清单会被“无信号”覆盖。
     """
     pat = re.compile(r"^scan_result_(\d{8})_\d{6}\.xlsx$")
     last_run_date = None
@@ -479,12 +540,14 @@ def _get_catchup_signal_dates(history_dir: Path, run_dt: datetime, max_bdays: in
         if last_run_date is None or d > last_run_date:
             last_run_date = d
 
-    today = run_dt.date()
+    today = anchor_date if anchor_date is not None else run_dt.date()
     if last_run_date is None or last_run_date >= today:
         return [today]
 
-    bdays = pd.bdate_range(start=last_run_date, end=today)
-    dates = [x.date() for x in bdays][1:]
+    # 用 > last_run_date 过滤而不是 [1:]：上一次运行可能发生在非交易日（周末补跑），
+    # 那时 bdate_range[0] 并不等于 last_run_date，[1:] 会白扔掉一个交易日的信号。
+    bdays = [x.date() for x in pd.bdate_range(start=last_run_date, end=today)]
+    dates = [d for d in bdays if d > last_run_date]
     if not dates:
         return [today]
     if len(dates) > max_bdays:
@@ -560,6 +623,18 @@ def compute_trailing_stop(ohlc: pd.DataFrame, base_loc: int, latest_loc: int,
         return None
     breached = breach_loc is not None
     cur_stop = stop_at_breach if breached else (peak - atr_mult * atr_last)
+    # 高波动标的上 mult*ATR 可能超过股价本身，止损价变成 <=0。这时 lows[j] <= stop_j
+    # 永远不成立，"持有" 是算术假象而不是风控结论——明确标成无效，不要伪装成有效止损。
+    if not np.isfinite(cur_stop) or cur_stop <= 0:
+        return {
+            "stop": None,
+            "atr": float(atr_last),
+            "peak": float(peak),
+            "last_close": float(closes[latest_loc]),
+            "breached": bool(breached),
+            "breach_date": ohlc.index[breach_loc] if breached else None,
+            "stop_invalid": True,
+        }
     return {
         "stop": float(cur_stop),
         "atr": float(atr_last),
@@ -567,6 +642,7 @@ def compute_trailing_stop(ohlc: pd.DataFrame, base_loc: int, latest_loc: int,
         "last_close": float(closes[latest_loc]),
         "breached": bool(breached),
         "breach_date": ohlc.index[breach_loc] if breached else None,
+        "stop_invalid": False,
     }
 
 
@@ -705,6 +781,10 @@ def _build_followup_sheets(
                 if ts is None:
                     row["移动止损"] = np.nan
                     row["止损状态"] = ""
+                elif ts.get("stop") is None:
+                    # mult*ATR 宽于股价本身 → 这条规则在该标的上无法给出有效止损。
+                    row["移动止损"] = np.nan
+                    row["止损状态"] = "无效(ATR>股价)"
                 elif ts["breached"]:
                     bd = pd.to_datetime(ts["breach_date"]).date().isoformat() if ts["breach_date"] is not None else ""
                     row["移动止损"] = round(ts["stop"], 4)
@@ -1250,7 +1330,7 @@ def _is_priority_buy_rule(rule_text: str) -> bool:
     return (
         "正式买入" in rule
         and (
-            "第一买入点" in rule
+            "第一观察点" in rule
             or "预警买入" in rule
             or "二进宫买入点" in rule
         )
@@ -1516,7 +1596,8 @@ def _collect_lifecycle_signal_rows(history_dir: Path, current_df: pd.DataFrame) 
     out = pd.concat(frames, ignore_index=True)
     needed = [
         "symbol", "name", "板块", "signal_date", "signal_type", "signal_side",
-        "close", "model", "extra_info", "Gann_1_date", "Gann_1_price",
+        "close", "low", "model", "extra_info", "Gann_1_date", "Gann_1_price",
+        "bar_partial",
     ]
     for c in needed:
         if c not in out.columns:
@@ -1527,13 +1608,28 @@ def _collect_lifecycle_signal_rows(history_dir: Path, current_df: pd.DataFrame) 
     out["signal_date"] = pd.to_datetime(out["signal_date"], errors="coerce").dt.date
     out["Gann_1_date"] = pd.to_datetime(out["Gann_1_date"], errors="coerce").dt.date
     out["Gann_1_price"] = pd.to_numeric(out["Gann_1_price"], errors="coerce")
-    out = out[out["signal_type"].isin(["第一买入点", "二进宫买入点", "预警买入", "正式买入", "预警卖出", "正式卖出"])]
+    out = out[out["signal_type"].isin(["第一观察点", "二进宫买入点", "预警买入", "正式买入", "预警卖出", "正式卖出"])]
     out = out.dropna(subset=["symbol", "signal_date"])
     out = out[out["signal_date"] >= LIFECYCLE_START_DATE]
-    out = out.sort_values(["symbol", "signal_date", "signal_type"]).drop_duplicates(
-        subset=["symbol", "signal_date", "signal_type"], keep="last"
-    )
-    return out.reset_index(drop=True)
+    # 同一 (symbol, 日期, 信号) 可能被多次运行写入。以前只保留“最后写入的那一版”，
+    # 于是一次盘中运行会把未收盘的临时价固化成 买入价 / 止损锚点，而且后续运行不会再
+    # 覆盖它（catchup 只回溯到上次运行日）。改成先按“价格可信度”排序：
+    # 未收盘(1) < 来源未知(0.5) < 已收盘(0)，keep="last" 于是优先取已收盘的那一版；
+    # 可信度相同时仍然是较晚的运行胜出（多列 sort_values 用 lexsort，稳定排序）。
+    partial_flag = out["bar_partial"]
+    if partial_flag.dtype == object:
+        partial_flag = partial_flag.replace(
+            {"True": True, "TRUE": True, "true": True, "False": False, "FALSE": False, "false": False, "": np.nan}
+        )
+    # to_numeric 对 bool dtype 会原样返回 bool，必须显式 astype，否则下面的比较全落空。
+    partial_flag = pd.to_numeric(partial_flag, errors="coerce").astype("float64")
+    partial_rank = partial_flag.where(partial_flag.isin([0.0, 1.0]), 0.5)
+    out = out.assign(_partial_rank=partial_rank)
+    out = out.sort_values(
+        ["symbol", "signal_date", "signal_type", "_partial_rank"],
+        ascending=[True, True, True, False],
+    ).drop_duplicates(subset=["symbol", "signal_date", "signal_type"], keep="last")
+    return out.drop(columns=["_partial_rank"]).reset_index(drop=True)
 
 
 def _build_lifecycle_tables(history_dir: Path, current_df: pd.DataFrame, run_dt: datetime, df_run: pd.DataFrame, min_days: int = 14):
@@ -1556,7 +1652,7 @@ def _build_lifecycle_tables(history_dir: Path, current_df: pd.DataFrame, run_dt:
         g = g.sort_values("signal_date")
         formal_buys = g[g["signal_type"] == "正式买入"]
         formal_sells = g[g["signal_type"] == "正式卖出"]
-        early_buys = g[g["signal_type"].isin(["第一买入点", "二进宫买入点", "预警买入"])]
+        early_buys = g[g["signal_type"].isin(["第一观察点", "二进宫买入点", "预警买入"])]
         buy_starts = formal_buys if not formal_buys.empty else early_buys
 
         for _, b in buy_starts.iterrows():
@@ -1602,7 +1698,7 @@ def _build_lifecycle_tables(history_dir: Path, current_df: pd.DataFrame, run_dt:
         for _, s in formal_sells.iterrows():
             sdate = s["signal_date"]
             future_formal_buys = formal_buys[formal_buys["signal_date"] > sdate]
-            future_warning_buys = g[g["signal_type"].isin(["第一买入点", "二进宫买入点", "预警买入"]) & (g["signal_date"] > sdate)]
+            future_warning_buys = g[g["signal_type"].isin(["第一观察点", "二进宫买入点", "预警买入"]) & (g["signal_date"] > sdate)]
             one_out_date = s.get("Gann_1_date")
             if pd.isna(one_out_date):
                 one_out_date = sdate
@@ -1661,6 +1757,144 @@ def _build_lifecycle_tables(history_dir: Path, current_df: pd.DataFrame, run_dt:
     if not sell_observation_df.empty:
         sell_observation_df = sell_observation_df.sort_values(["卖出跟踪起点", "symbol"], ascending=[True, True]).reset_index(drop=True)
     return buy_observation_df, buy_history_df, sell_observation_df, sell_history_df
+
+
+def _fetch_price_series_for_tracker(symbol: str):
+    try:
+        df = download_daily(symbol, period="1y")
+    except Exception:
+        return None
+    if df is None or df.empty:
+        return None
+    return df
+
+
+FIRST_OBS_TRACKER_COLS = [
+    "symbol", "name", "板块", "观察起点", "观察价", "启动日低点", "低点来源",
+    "已跟踪交易日", "观察截止", "二进宫确认日期", "跌破日期", "状态", "移除原因",
+]
+
+
+def _build_first_observation_tracker(history_dir: Path, current_df: pd.DataFrame, run_dt: datetime, df_run: pd.DataFrame, min_days: int = 14) -> pd.DataFrame:
+    """
+    “第一观察点”专属跟踪：只做预备观察，不是买入信号，需要额外规则判断能否走强或该移除。
+    判定窗口是观察起点之后的 min_days 个交易日（含），三者取最先发生的一个：
+    - 确认：窗口内出现“二进宫买入点” → “已确认（二进宫买入点）”。
+    - 结构破位：窗口内收盘价跌破启动日最低点 → “移除（跌破启动日低点）”。
+    - 超时：窗口走完两者都没发生 → “移除（超过N交易日未确认）”。
+    窗口未走完且两者都没发生 → “观察中”。
+
+    确认/破位都必须在窗口内判定：否则窗口外几十个交易日后的一次二进宫，会把一个早就
+    崩掉的观察点追认成“已确认”。启动日低点缺失时（旧历史行没有 low 列）用行情补算；
+    补算不到就明确写“无法判定”，绝不能反过来声称“未跌破”。
+    """
+    sig = _collect_lifecycle_signal_rows(history_dir, current_df)
+    if sig.empty:
+        return pd.DataFrame(columns=FIRST_OBS_TRACKER_COLS)
+
+    meta = df_run[["symbol", "name", "group"]].drop_duplicates(subset=["symbol"], keep="first").copy()
+    meta["symbol"] = meta["symbol"].astype(str).str.strip().str.upper()
+    meta["板块_meta"] = meta["group"].apply(_normalize_sector_with_code)
+    meta = meta.set_index("symbol")
+
+    today = run_dt.date()
+    rows = []
+
+    for symbol, g in sig.groupby("symbol"):
+        g = g.sort_values("signal_date")
+        first_obs = g[g["signal_type"] == "第一观察点"]
+        second_buys = g[g["signal_type"] == "二进宫买入点"]
+        if first_obs.empty:
+            continue
+
+        price_series = _fetch_price_series_for_tracker(symbol)
+
+        for _, obs in first_obs.iterrows():
+            entry_date = obs["signal_date"]
+            entry_close = pd.to_numeric(obs.get("close", np.nan), errors="coerce")
+            entry_low = pd.to_numeric(obs.get("low", np.nan), errors="coerce")
+            days = _business_days_between(entry_date, today)
+            # 判定窗口右界：观察起点后第 min_days 个交易日。与 days >= min_days 的超时
+            # 判定同一套边界（np.busday_count(entry, deadline) == min_days）。
+            deadline = pd.Timestamp(np.busday_offset(np.datetime64(entry_date, "D"), min_days, roll="forward")).date()
+
+            low_source = ""
+            if pd.notna(entry_low):
+                low_source = "记录"
+            elif price_series is not None:
+                same_day = price_series[price_series.index.date == entry_date]
+                if not same_day.empty:
+                    entry_low = pd.to_numeric(same_day["Low"].iloc[0], errors="coerce")
+                    if pd.notna(entry_low):
+                        low_source = "补算"
+            if not low_source:
+                low_source = "缺失"
+
+            base = {
+                "symbol": symbol,
+                "name": obs.get("name") or (meta.loc[symbol, "name"] if symbol in meta.index else ""),
+                "板块": obs.get("板块") if pd.notna(obs.get("板块")) else (meta.loc[symbol, "板块_meta"] if symbol in meta.index else "99 未分组"),
+                "观察起点": entry_date,
+                "观察价": entry_close,
+                "启动日低点": entry_low,
+                "低点来源": low_source,
+                "已跟踪交易日": days,
+                "观察截止": deadline,
+            }
+
+            confirm_candidates = second_buys[
+                (second_buys["signal_date"] > entry_date) & (second_buys["signal_date"] <= deadline)
+            ]
+            confirm_date = confirm_candidates.iloc[0]["signal_date"] if not confirm_candidates.empty else None
+
+            break_date = None
+            if pd.notna(entry_low) and price_series is not None:
+                idx_dates = price_series.index.date
+                after = price_series[(idx_dates > entry_date) & (idx_dates <= deadline)]
+                breaks = after[pd.to_numeric(after["Close"], errors="coerce") < entry_low]
+                if not breaks.empty:
+                    break_date = breaks.index[0].date()
+
+            if confirm_date is not None and (break_date is None or confirm_date <= break_date):
+                rows.append({
+                    **base,
+                    "二进宫确认日期": confirm_date,
+                    "状态": "已确认（二进宫买入点）",
+                    "移除原因": f"二进宫买入点确认（{_business_days_between(entry_date, confirm_date)}个交易日内）",
+                })
+                continue
+            if break_date is not None:
+                rows.append({
+                    **base,
+                    "跌破日期": break_date,
+                    "状态": "移除（跌破启动日低点）",
+                    "移除原因": f"收盘价跌破启动日低点 {entry_low:.2f}",
+                })
+                continue
+            if days >= min_days:
+                if pd.notna(entry_low) and price_series is not None:
+                    reason = f"{min_days}个交易日内未出现二进宫买入点，也未跌破启动日低点"
+                else:
+                    # 低点或行情缺失 → 破位分支根本没跑过，不能声称“未跌破”。
+                    reason = f"{min_days}个交易日内未出现二进宫买入点；启动日低点{low_source}，是否破位无法判定"
+                rows.append({
+                    **base,
+                    "状态": f"移除（超过{min_days}交易日未确认）",
+                    "移除原因": reason,
+                })
+                continue
+            rows.append({
+                **base,
+                "状态": "观察中",
+                "移除原因": "" if (pd.notna(entry_low) and price_series is not None) else f"启动日低点{low_source}，破位判定暂不可用",
+            })
+
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return pd.DataFrame(columns=FIRST_OBS_TRACKER_COLS)
+    # 列集合以前随“哪个分支先命中”而变（二进宫确认日期 / 跌破日期 是分支独有的键）。
+    out = out.reindex(columns=FIRST_OBS_TRACKER_COLS)
+    return out.sort_values(["观察起点", "symbol"], ascending=[False, True]).reset_index(drop=True)
 
 
 def _write_simple_table_sheet(writer, sheet_name: str, df: pd.DataFrame):
@@ -1984,7 +2218,16 @@ def _rule_text_for_tv(rule_text: str) -> str:
     return str(rule_text or "").replace("|", "+").strip()
 
 
-def score_buy_signal_row(row: pd.Series) -> float:
+def score_buy_signal_row_raw(row: pd.Series) -> float:
+    """Uncapped buy-conviction score for BUY rows (NaN otherwise).
+
+    Same additive weights as ``score_buy_signal_row`` but WITHOUT the 0-100
+    clamp. Multiple strong names all pile past 100 and would tie once clamped;
+    this raw value keeps their true separation so the notes file can rank
+    within the top tier (e.g. two names both display 100 but sort 122 > 111).
+    Do not surface this as the primary score — it has no fixed ceiling and is
+    only meaningful as a tiebreaker / secondary sort key.
+    """
     if str(row.get("signal_side", "")).upper() != "BUY":
         return np.nan
     score = 50.0
@@ -1996,7 +2239,7 @@ def score_buy_signal_row(row: pd.Series) -> float:
         score += 14
     elif signal_type == "二进宫买入点":
         score += 16
-    elif signal_type == "第一买入点":
+    elif signal_type == "第一观察点":
         score += 10
     if "BUY_A" in model or "0出" in model:
         score += 8
@@ -2030,7 +2273,14 @@ def score_buy_signal_row(row: pd.Series) -> float:
     h4_rsi = pd.to_numeric(row.get("H4_RSI", np.nan), errors="coerce")
     if pd.notna(h4_rsi) and h4_rsi >= 45:
         score += 3
-    return round(max(0.0, min(100.0, score)), 1)
+    return round(score, 1)
+
+
+def score_buy_signal_row(row: pd.Series) -> float:
+    raw = score_buy_signal_row_raw(row)
+    if pd.isna(raw):
+        return np.nan
+    return round(max(0.0, min(100.0, raw)), 1)
 
 
 def score_sell_signal_row(row: pd.Series) -> float:
@@ -2086,18 +2336,71 @@ def score_sell_signal_row(row: pd.Series) -> float:
     return round(max(0.0, min(100.0, score)), 1)
 
 
+def _build_buy_signal_detail_map(df_all: pd.DataFrame, today) -> dict:
+    """Per-symbol rich detail for TODAY's BUY signals, keyed by upper-case symbol.
+
+    Pulls from the master signal frame (df_all) which carries the metrics the
+    notes file otherwise drops: uncapped raw score (tiebreaker), RSI, rank120,
+    4H RSI/分金, daily Gann_0 level, segment gain%, volume-vs-20d. Also flags
+    which names are pre-alert-only (4H 0出 but no daily 0出) — the escalation /
+    pre-market-watch candidates. Purely informational; changes no score/signal.
+    """
+    detail: dict[str, dict] = {}
+    if df_all is None or df_all.empty:
+        return detail
+    df = df_all.copy()
+    if "signal_side" not in df.columns or "signal_date" not in df.columns:
+        return detail
+    df = df[df["signal_side"].astype(str).str.upper() == "BUY"]
+    df = df[df["signal_date"] == today]
+    if df.empty:
+        return detail
+    df["_raw"] = pd.to_numeric(df.get("buy_score_raw", np.nan), errors="coerce")
+    for sym, g in df.groupby(df["symbol"].astype(str).str.strip().str.upper()):
+        if not sym:
+            continue
+        types = set(g["signal_type"].astype(str))
+        # richest row = the highest-raw-score signal for this symbol today
+        best = g.sort_values("_raw", ascending=False).iloc[0]
+
+        def _num(col):
+            return pd.to_numeric(best.get(col, np.nan), errors="coerce")
+
+        vol = _num("volume")
+        vol_ma20 = _num("vol_ma20")
+        vol_ratio = (vol / vol_ma20) if (pd.notna(vol) and pd.notna(vol_ma20) and vol_ma20) else np.nan
+        detail[sym] = {
+            "raw_score": pd.to_numeric(g["_raw"].max(), errors="coerce"),
+            "signal_types": types,
+            "is_prealert_only": ("预警买入" in types) and ("正式买入" not in types),
+            "has_formal": "正式买入" in types,
+            "close": _num("close"),
+            "RSI": _num("RSI"),
+            "rank120": _num("rank120"),
+            "H4_RSI": _num("H4_RSI"),
+            "H4_FJ": _num("H4_FJ"),
+            "Gann_0": _num("Gann_0"),
+            "Gann_1": _num("Gann_1_price"),
+            "gain_pct": _num("Gann_gain_pct"),
+            "vol_ratio": vol_ratio,
+        }
+    return detail
+
+
 def export_tv_buy_signal_notes(
     buy_followup_df: pd.DataFrame,
     run_dt: datetime,
     df_run: pd.DataFrame,
     base_dir: Path,
     history_dir: Path,
+    signal_detail: dict | None = None,
 ):
     """
     导出当日买入触发样本：
     - tv_buy_today_latest.txt：纯 TradingView 导入版
-    - tv_buy_today_notes_latest.txt：带备注版
+    - tv_buy_today_notes_latest.txt：带备注版（含明细 + 盘前观察）
     """
+    signal_detail = signal_detail or {}
     date_str = run_dt.strftime("%Y-%m-%d")
     ts_str = run_dt.strftime("%Y%m%d_%H%M%S")
     out_dir = history_dir.parent / "tv_buy_signals"
@@ -2121,6 +2424,12 @@ def export_tv_buy_signal_notes(
             .to_dict()
         )
 
+    def _fmt(v, spec, suffix=""):
+        v = pd.to_numeric(v, errors="coerce") if not isinstance(v, (int, float)) else v
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return "-"
+        return format(float(v), spec) + suffix
+
     if buy_followup_df is None or buy_followup_df.empty:
         pure_content = ""
         notes_content = "# No buy signals today\n"
@@ -2132,13 +2441,20 @@ def export_tv_buy_signal_notes(
         rows["symbol"] = rows["symbol"].astype(str).str.strip().str.upper()
         rows["观海买点分"] = pd.to_numeric(rows["观海买点分"], errors="coerce")
         rows = rows[rows["symbol"] != ""].copy()
+        # tiebreaker: capped score first, then uncapped raw score (splits the 100-pile), then symbol
         rows["_score_sort"] = rows["观海买点分"].fillna(-1)
-        rows = rows.sort_values(["_score_sort", "symbol"], ascending=[False, True]).drop_duplicates("symbol", keep="first")
+        rows["_raw_sort"] = rows["symbol"].map(
+            lambda s: pd.to_numeric(signal_detail.get(s, {}).get("raw_score", np.nan), errors="coerce")
+        ).fillna(rows["_score_sort"])
+        rows = rows.sort_values(
+            ["_score_sort", "_raw_sort", "symbol"], ascending=[False, False, True]
+        ).drop_duplicates("symbol", keep="first")
 
         pure_lines = []
         note_lines = [
             f"# {date_str} 当日买入触发样本",
-            "# 格式：TradingView代码 | 触发日期 | 观海买点分 | 触发规则 | 板块 | D0_close | 移动止损(5×ATR22) | 止损状态",
+            "# 格式：TV代码 | 触发日期 | 观海买点分(原始分) | 触发规则 | 板块 | 收盘 | "
+            "RSI | rank120 | 4H_RSI/分金 | 段涨幅 | 量比20日 | 移动止损(5×ATR22) | 距止损% | 止损状态",
         ]
         for _, r in rows.iterrows():
             symbol = str(r["symbol"]).strip().upper()
@@ -2146,15 +2462,56 @@ def export_tv_buy_signal_notes(
             if not tv_symbol:
                 continue
             pure_lines.append(tv_symbol)
+            d = signal_detail.get(symbol, {})
             score = r.get("观海买点分", np.nan)
             score_txt = "" if pd.isna(score) else f"{float(score):.0f}"
+            raw = pd.to_numeric(d.get("raw_score", np.nan), errors="coerce")
+            # only show the raw parenthetical when the cap actually hid separation (raw > 100)
+            if pd.notna(raw) and pd.notna(score) and float(raw) > 100:
+                score_txt = f"{score_txt}(原始{float(raw):.0f})"
             trail_val = pd.to_numeric(r.get("移动止损", np.nan), errors="coerce")
             trail_txt = "" if pd.isna(trail_val) else f"{float(trail_val):.2f}"
+            d0_close = pd.to_numeric(r.get("D0_close", np.nan), errors="coerce")
+            dist_stop = ""
+            if pd.notna(trail_val) and pd.notna(d0_close) and d0_close:
+                dist_stop = f"{(d0_close - trail_val) / d0_close * 100:.1f}%"
+            h4 = f"{_fmt(d.get('H4_RSI'), '.0f')}/{_fmt(d.get('H4_FJ'), '.0f')}"
             note_lines.append(
                 f"{tv_symbol} | {r.get('D0_date', '')} | {score_txt} | "
                 f"{_rule_text_for_tv(r.get('D0_rule', ''))} | {r.get('板块', '')} | {r.get('D0_close', '')} | "
-                f"{trail_txt} | {r.get('止损状态', '')}"
+                f"{_fmt(d.get('RSI'), '.0f')} | {_fmt(d.get('rank120'), '.2f')} | {h4} | "
+                f"{_fmt(d.get('gain_pct'), '.1%')} | {_fmt(d.get('vol_ratio'), '.1f', 'x')} | "
+                f"{trail_txt} | {dist_stop or '-'} | {r.get('止损状态', '')}"
             )
+
+        # —— 盘前观察 / 预警升级候选（仅提示，不自动升级；升级规则待回测确认）——
+        watch = sorted(
+            [(s, v) for s, v in signal_detail.items() if v.get("is_prealert_only")],
+            key=lambda kv: pd.to_numeric(kv[1].get("raw_score", np.nan), errors="coerce") if pd.notna(
+                pd.to_numeric(kv[1].get("raw_score", np.nan), errors="coerce")) else -1,
+            reverse=True,
+        )
+        if watch:
+            note_lines.append("")
+            note_lines.append("# —— 盘前观察 / 预警升级候选（仅提示，不自动升级；升级规则待回测确认）——")
+            note_lines.append("# 已触发预警买入(4H 0出) 但日线尚未 0出。关注日线是否收复 Gann0 → 可能升级为正式买入。")
+            note_lines.append("# Gann0='-' 表示日线尚无活动Gann段（需先形成日线0出）；距Gann0% 为正=收盘已在Gann0上方，升级更临近。")
+            note_lines.append("# TV代码 | 收盘 | 日线Gann0 | 收盘距Gann0% | 4H_RSI/分金 | 观海买点分")
+            for symbol, v in watch:
+                tv_symbol = build_tv_symbol(symbol, ex_map.get(symbol, ""))
+                if not tv_symbol:
+                    continue
+                close = pd.to_numeric(v.get("close"), errors="coerce")
+                g0 = pd.to_numeric(v.get("Gann_0"), errors="coerce")
+                dist = ""
+                if pd.notna(close) and pd.notna(g0) and g0:
+                    dist = f"{(close / g0 - 1) * 100:+.1f}%"
+                sc = pd.to_numeric(v.get("raw_score"), errors="coerce")
+                sc_txt = "-" if pd.isna(sc) else f"{min(100.0, float(sc)):.0f}"
+                note_lines.append(
+                    f"{tv_symbol} | {_fmt(close, '.2f')} | {_fmt(g0, '.2f')} | {dist or '-'} | "
+                    f"{_fmt(v.get('H4_RSI'), '.0f')}/{_fmt(v.get('H4_FJ'), '.0f')} | {sc_txt}"
+                )
 
         pure_content = "\n".join(pure_lines) + ("\n" if pure_lines else "")
         notes_content = "\n".join(note_lines) + "\n"
@@ -2859,7 +3216,7 @@ def add_buy_low_reset_confirmed(df):
 def add_low_start_buy_points(df):
     """
     用户偏好的低位启动器：
-    - 第一买入点：低位首根日线绿柱/启动柱，只做预备观察。
+    - 第一观察点：低位首根日线绿柱/启动柱，只做预备观察。
     - 二进宫买入点：首绿后有真实回踩、结构未明显跌破，再次绿柱确认。
     """
     df = df.copy()
@@ -2966,6 +3323,7 @@ def scan_one_symbol(sym, name, xl: XunLongIndicator, *, daily_fetcher=None, h4_f
             "signal_side": signal_side,
             "model": model,
             "close": row["Close"],
+            "low": row["Low"],
             "volume": row["Volume"],
             "vol_ma20": row.get("VolMA20", np.nan),
             "L2_trend": row["L2_trend"],
@@ -2978,16 +3336,18 @@ def scan_one_symbol(sym, name, xl: XunLongIndicator, *, daily_fetcher=None, h4_f
             "H4_1_birth": row.get("H4_Gann_1_birth_daily", False),
             "Gann_1_date": gann_1_date,
             "Gann_1_price": row.get("Gann_1", np.nan),
+            "Gann_0": row.get("Gann_0", np.nan),
+            "Gann_gain_pct": row.get("Gann_gain_pct", np.nan),
             "extra_info": extra_info,
         })
 
     # ---- 新版买卖策略：只保留预警/正式四类 ----
-    # 低位启动器：第一买入点 / 二进宫买入点
+    # 低位启动器：第一观察点 / 二进宫买入点
     if "LOW_START_FIRST_BUY" in df_all.columns:
         recent = df_all[df_all["LOW_START_FIRST_BUY"].fillna(False).astype(bool) & daily_recent_mask]
         for idx, row in recent.iterrows():
             append_signal(
-                idx, row, "第一买入点", "BUY", "LOW_START_FIRST_GREEN",
+                idx, row, "第一观察点", "BUY", "LOW_START_FIRST_GREEN",
                 f"低位首绿柱; Rank120={row.get('Rank120', np.nan):.2f}; L2={row.get('L2_trend', np.nan):.2f}; 分金={row.get('FJ_value', np.nan):.2f}; 只做预备观察"
             )
 
@@ -3014,7 +3374,13 @@ def scan_one_symbol(sym, name, xl: XunLongIndicator, *, daily_fetcher=None, h4_f
         for idx, row in recent.iterrows():
             _atr0 = atr22_series.get(idx, np.nan)
             _stop0 = (row["Close"] - EXIT_TRAIL_ATR_MULT * _atr0) if pd.notna(_atr0) else np.nan
-            _stop_txt = f"{_stop0:.2f}" if pd.notna(_stop0) else "n/a"
+            # 同 compute_trailing_stop：5×ATR 宽于股价时止损价 <=0，是无效止损而不是宽止损。
+            if pd.isna(_stop0):
+                _stop_txt = "n/a"
+            elif _stop0 <= 0:
+                _stop_txt = "无效(ATR>股价)"
+            else:
+                _stop_txt = f"{_stop0:.2f}"
             append_signal(
                 idx, row, "正式买入", "BUY", "D1_BUY_A_0出",
                 f"日线0出; Gann0={row.get('Gann_0', np.nan):.2f}; Gann1预览={row.get('Gann_1', np.nan):.2f}; "
@@ -3174,6 +3540,23 @@ def main():
 
     forced_dates = _get_forced_rescan_signal_dates(run_dt)
 
+    # 信号基准交易日：用最后一根真实日线决定，而不是挂钟日期（见 resolve_session_state）。
+    session_state = resolve_session_state(run_dt)
+    session_date = session_state["session_date"] or run_dt.date()
+    if session_state["session_date"] is not None and not session_state["is_trading_day"]:
+        print(
+            f"⚠️ {session_state['wall_date']} 不是交易日：本次信号基准交易日为 {session_date}，"
+            f"输出反映的是该交易日的收盘状态（不是“今天无信号”）。",
+            flush=True,
+        )
+    if session_state["is_partial"]:
+        print(
+            f"⚠️ 盘中运行：{session_date} 这根日线尚未收盘。close/volume/量比20日 都只是当前最新值，"
+            f"量比会因为只走了部分交易时段而系统性偏低。这些行会标记 bar_partial=True，"
+            f"生命周期买入价优先取收盘后那一版——收盘后再跑一次即可固化。",
+            flush=True,
+        )
+
     if not all_rows:
         print("本次没有任何股票触发信号。将生成空 Summary，并继续更新历史追踪sheet。")
         df_all = pd.DataFrame(columns=[
@@ -3189,7 +3572,9 @@ def main():
 
         # 自动补回遗漏交易日的信号，避免漏跑后丢样本。
         # 手动重建时可用 STOCK_ONECLICK_RESCAN_FROM=YYYY-MM-DD 强制保留一段历史信号。
-        catchup_dates = forced_dates or _get_catchup_signal_dates(HISTORY_DIR, run_dt, max_bdays=GANN_LOOKBACK_DAYS)
+        catchup_dates = forced_dates or _get_catchup_signal_dates(
+            HISTORY_DIR, run_dt, max_bdays=GANN_LOOKBACK_DAYS, anchor_date=session_date
+        )
         df_all["signal_date"] = pd.to_datetime(df_all["signal_date"], errors="coerce").dt.date
         df_all = df_all[df_all["signal_date"].isin(catchup_dates)]
         df_all = (
@@ -3211,18 +3596,16 @@ def main():
     run_time = now.strftime("%H:%M:%S")
     df_all["run_date"] = run_date
     df_all["run_time"] = run_time
+    # 只有基准交易日那一天的行价格才可能是未收盘的临时价；补回的历史交易日都是完整日线。
+    df_all["bar_partial"] = (
+        [bool(session_state["is_partial"]) and d == session_date for d in df_all["signal_date"]]
+        if not df_all.empty else []
+    )
     df_all["buy_score"] = df_all.apply(score_buy_signal_row, axis=1) if not df_all.empty else np.nan
+    df_all["buy_score_raw"] = df_all.apply(score_buy_signal_row_raw, axis=1) if not df_all.empty else np.nan
     df_all["sell_score"] = df_all.apply(score_sell_signal_row, axis=1) if not df_all.empty else np.nan
 
-    col_order = [
-        "run_date", "run_time",
-        "symbol", "name", "板块",
-        "signal_date", "signal_type", "signal_side", "model",
-        "close", "volume", "vol_ma20",
-        "L2_trend", "L2_pump", "RSI",
-        "rank120", "H4_RSI", "H4_FJ", "H4_0_birth", "H4_1_birth",
-        "Gann_1_date", "Gann_1_price", "buy_score", "sell_score", "extra_info",
-    ]
+    col_order = list(SIGNAL_COL_ORDER)
     for c in col_order:
         if c not in df_all.columns:
             df_all[c] = np.nan
@@ -3242,9 +3625,9 @@ def main():
     if "板块" in df_all.columns:
         df_all["板块"] = df_all["板块"].apply(_normalize_sector_with_code)
     df_all = df_all[col_order]
-    first_buy_count = int(df_all["signal_type"].astype(str).eq("第一买入点").sum())
+    first_buy_count = int(df_all["signal_type"].astype(str).eq("第一观察点").sum())
     second_buy_count = int(df_all["signal_type"].astype(str).eq("二进宫买入点").sum())
-    print(f"✅ 低位启动器：第一买入点 {first_buy_count} 条，二进宫买入点 {second_buy_count} 条", flush=True)
+    print(f"✅ 低位启动器：第一观察点 {first_buy_count} 条，二进宫买入点 {second_buy_count} 条", flush=True)
 
     # 追踪表：信号后 20 交易日表现（按 signal_date 建 sheet）
     print("阶段 4/4：生成信号后表现追踪sheet...", flush=True)
@@ -3273,8 +3656,15 @@ def main():
     buy_history_df = _drop_symbols(buy_history_df, excluded_symbols)
     sell_observation_df = _drop_symbols(sell_observation_df, excluded_symbols)
     sell_history_df = _drop_symbols(sell_history_df, excluded_symbols)
+    first_observation_df = _build_first_observation_tracker(
+        history_source_dir, df_all, now, df_run, min_days=TRACK_MAX_DAYS
+    )
+    first_observation_df = _drop_symbols(first_observation_df, excluded_symbols)
     # tv_today 只导出“当天 D0 批次”的股票（与当日日期 sheet 保持一致）
-    today_key = now.date().isoformat()
+    # tv_today 只导出“当天 D0 批次”的股票（与当日日期 sheet 保持一致）。
+    # 用基准交易日而不是挂钟日期：周末/假日运行时挂钟日期没有对应的 D0 sheet，
+    # tv 清单会空掉，市场环境也会算到一个非交易日上。
+    today_key = session_date.isoformat()
     if today_key in followup_sheets and not followup_sheets[today_key].empty:
         tv_symbols = (
             followup_sheets[today_key]["symbol"]
@@ -3359,6 +3749,7 @@ def main():
         _write_simple_table_sheet(writer, "买入历史记录", buy_history_df)
         _write_simple_table_sheet(writer, "卖出观察列表", sell_observation_df)
         _write_simple_table_sheet(writer, "卖出历史记录", sell_history_df)
+        _write_simple_table_sheet(writer, "第一观察点跟踪", first_observation_df)
         combined_dates = sorted(
             set(followup_sheets.keys())
             | set(k.replace("SELL_", "") for k in sell_followup_sheets.keys())
@@ -3409,6 +3800,13 @@ def main():
     print(f"✅ 买入历史记录：{len(buy_history_df)} 条")
     print(f"✅ 卖出观察列表：{len(sell_observation_df)} 条")
     print(f"✅ 卖出历史记录：{len(sell_history_df)} 条")
+    if not first_observation_df.empty:
+        _fo_active = int(first_observation_df["状态"].astype(str).eq("观察中").sum())
+        _fo_confirmed = int(first_observation_df["状态"].astype(str).eq("已确认（二进宫买入点）").sum())
+        _fo_removed = len(first_observation_df) - _fo_active - _fo_confirmed
+        print(f"✅ 第一观察点跟踪：观察中 {_fo_active} 条，已确认 {_fo_confirmed} 条，已移除 {_fo_removed} 条")
+    else:
+        print("✅ 第一观察点跟踪：0 条")
     if archived_files:
         print(f"✅ 已归档满{TRACK_MAX_DAYS}日批次：{len(archived_files)} 个")
         for p in archived_files:
@@ -3416,12 +3814,15 @@ def main():
 
     # 6) TradingView 每日清单（按日期命名）+ 历史清单
     tv_today_path, tv_hist_path = export_tradingview_lists(tv_export_df, now, EXPORT_DIR, HISTORY_DIR)
+    # 为买入备注版构建“今日买入信号”的丰富明细（tiebreaker 原始分 + 指标 + 盘前观察级别）
+    signal_detail_map = _build_buy_signal_detail_map(df_all, now.date())
     tv_buy_path, tv_buy_notes_path, tv_buy_latest, tv_buy_notes_latest = export_tv_buy_signal_notes(
         followup_sheets.get(today_key, pd.DataFrame()),
         now,
         df_run,
         EXPORT_DIR,
         HISTORY_DIR,
+        signal_detail=signal_detail_map,
     )
     print(f"✅ TV今日清单：{tv_today_path}")
     print(f"✅ TV历史清单：{tv_hist_path}")

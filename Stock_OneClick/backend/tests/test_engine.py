@@ -14,6 +14,7 @@ fails loudly.
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -86,10 +87,25 @@ def test_score_formal_buy_clamps_to_100():
     assert scan.score_buy_signal_row(row) == 100.0
 
 
-def test_score_first_buy_midrange_exact():
-    # 50 +10(第一买入点) +0(model no BUY_A/0出) +3(rank 0.45-0.65) +3(RSI 35-42) = 66
+def test_score_raw_is_uncapped_for_tiebreak():
+    # Same 107-point row as the clamp test: capped score is 100 but the raw
+    # tiebreaker keeps the true 107 so two 100-capped names still sort apart.
     row = pd.Series({
-        "signal_side": "BUY", "signal_type": "第一买入点", "model": "LOW_START_FIRST_GREEN",
+        "signal_side": "BUY", "signal_type": "正式买入", "model": "D1_BUY_A_0出",
+        "rank120": 0.20, "RSI": 50.0, "L2_trend": 20.0, "H4_FJ": 40.0, "H4_RSI": 50.0,
+    })
+    assert scan.score_buy_signal_row(row) == 100.0
+    assert scan.score_buy_signal_row_raw(row) == 107.0
+    # non-BUY rows stay NaN on the raw path too
+    assert pd.isna(scan.score_buy_signal_row_raw(pd.Series({"signal_side": "SELL"})))
+
+
+def test_score_first_observation_weight():
+    # 50 +10(第一观察点) +0(model no BUY_A/0出) +3(rank 0.45-0.65) +3(RSI 35-42) = 66
+    # (used to be a nameless tail of test_score_raw_is_uncapped_for_tiebreak, so a
+    #  regression in the 第一观察点 weight could only surface as that test failing.)
+    row = pd.Series({
+        "signal_side": "BUY", "signal_type": "第一观察点", "model": "LOW_START_FIRST_GREEN",
         "rank120": 0.50, "RSI": 38.0, "L2_trend": 100.0,
     })
     assert scan.score_buy_signal_row(row) == 66.0
@@ -258,6 +274,324 @@ def test_in_run_bar_cache_dedups_fetches():
     finally:
         scan._fetch_daily_raw = real
         scan.clear_bar_cache()
+
+
+def test_intraday_store_merge_dedups_and_revises_partial():
+    import intraday_store as st
+    idx = pd.date_range("2026-07-08 15:00", periods=3, freq="15min", tz="America/New_York")
+    old = pd.DataFrame({"Open": 1.0, "High": 1.0, "Low": 1.0,
+                        "Close": [10.0, 11.0, 12.0], "Volume": 5.0}, index=idx)
+    # revise the last stored bar (partial finalizing) + append one new bar
+    new = pd.DataFrame({"Open": 1.0, "High": 1.0, "Low": 1.0, "Close": [11.5, 99.0], "Volume": 7.0},
+                       index=[idx[2], idx[2] + pd.Timedelta(minutes=15)])
+    m, note = st.merge_bars(old, new)
+    assert len(m) == 4 and int(m.index.duplicated().sum()) == 0
+    assert m.index.is_monotonic_increasing
+    assert m["Close"].iloc[2] == 11.5   # fresh fetch overrides the stored partial bar
+    assert m["Close"].iloc[-1] == 99.0  # genuinely-new bar appended
+
+
+def test_intraday_store_split_vs_real_move():
+    import intraday_store as st
+    idx = pd.date_range("2026-07-07 10:00", periods=12, freq="15min", tz="America/New_York")
+    base = np.linspace(100.0, 110.0, 12)
+    old = pd.DataFrame({"Open": base, "High": base, "Low": base, "Close": base, "Volume": 100.0}, index=idx)
+    # uniform 0.5x rescale over the overlap == a 2:1 split yfinance back-adjusted -> rescale stored
+    m_split, note_split = st.merge_bars(old, old * 0.5)
+    assert "split" in note_split and abs(m_split["Close"].iloc[0] - 50.0) < 1e-6
+    # a single non-uniform bar is a real move, NOT a split -> no rescale
+    new_move = old.copy()
+    new_move.iloc[-1, new_move.columns.get_loc("Close")] *= 1.3
+    m_move, note_move = st.merge_bars(old, new_move)
+    assert note_move == "appended" and abs(m_move["Close"].iloc[0] - 100.0) < 1e-6
+
+
+# --------------------------------------------------------------------------- #
+# session anchoring: signals are dated by the last real bar, not the wall clock
+# --------------------------------------------------------------------------- #
+def _empty_history_dir() -> Path:
+    """A Path with no scan_result_*.xlsx in it (glob on a missing dir is empty)."""
+    return BACKEND_DIR / "tests" / "_no_such_history_dir"
+
+
+def test_catchup_anchors_on_session_date_not_wall_clock():
+    # Ran Friday post-close; now it's Saturday. Signals are dated Friday.
+    # Anchoring on the wall clock (Saturday) filtered every signal away and
+    # overwrote Summary / dashboard / tv lists with "no signals".
+    friday = pd.Timestamp("2026-07-24").date()
+    saturday = datetime(2026, 7, 25, 9, 0)
+    got = scan._get_catchup_signal_dates(_empty_history_dir(), saturday, anchor_date=friday)
+    assert got == [friday], got
+    # without an anchor it still degrades to the wall-clock date (fallback path)
+    assert scan._get_catchup_signal_dates(_empty_history_dir(), saturday) == [saturday.date()]
+
+
+def test_catchup_after_non_business_day_run_keeps_every_missed_session(tmp=None):
+    # Last run was itself on a Saturday (weekend catch-up run), so bdate_range's
+    # first element is Monday, not last_run_date -> the old `[1:]` slice silently
+    # threw Monday's signals away.
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        hist = Path(d)
+        (hist / "scan_result_20260725_120000.xlsx").write_bytes(b"")   # Sat 7/25
+        anchor = pd.Timestamp("2026-07-31").date()                     # Fri 7/31
+        got = scan._get_catchup_signal_dates(hist, datetime(2026, 7, 31, 17, 0),
+                                             max_bdays=10, anchor_date=anchor)
+    assert got[0] == pd.Timestamp("2026-07-27").date(), f"lost Monday: {got}"
+    assert got[-1] == anchor
+    assert len(got) == 5
+
+
+def test_resolve_session_state_flags_partial_and_non_trading_day():
+    real = scan._fetch_daily_raw
+    scan.clear_bar_cache()
+    try:
+        idx = pd.bdate_range("2026-07-01", "2026-07-30")   # last bar = Thu 2026-07-30
+        frame = pd.DataFrame(
+            {"Open": 1.0, "High": 1.0, "Low": 1.0, "Close": 1.0, "Volume": 1.0}, index=idx
+        )
+        scan._fetch_daily_raw = lambda symbol, period="1y": frame.copy()
+
+        # mid-session on the session date itself -> partial
+        mid = scan.resolve_session_state(datetime(2026, 7, 30, 11, 2))
+        assert mid["session_date"] == pd.Timestamp("2026-07-30").date()
+        assert mid["is_partial"] is True and mid["is_trading_day"] is True
+
+        # after the close on the same day -> complete
+        scan.clear_bar_cache()
+        post = scan.resolve_session_state(datetime(2026, 7, 30, 17, 30))
+        assert post["is_partial"] is False
+
+        # weekend: wall clock is Saturday, session date is the Thursday bar
+        scan.clear_bar_cache()
+        wknd = scan.resolve_session_state(datetime(2026, 8, 1, 10, 0))
+        assert wknd["session_date"] == pd.Timestamp("2026-07-30").date()
+        assert wknd["is_trading_day"] is False and wknd["is_partial"] is False
+    finally:
+        scan._fetch_daily_raw = real
+        scan.clear_bar_cache()
+
+
+def test_resolve_session_state_falls_back_when_reference_missing():
+    real = scan._fetch_daily_raw
+    scan.clear_bar_cache()
+    try:
+        scan._fetch_daily_raw = lambda symbol, period="1y": None
+        st = scan.resolve_session_state(datetime(2026, 7, 30, 11, 2))
+        assert st["session_date"] is None and st["source"] == "fallback"
+    finally:
+        scan._fetch_daily_raw = real
+        scan.clear_bar_cache()
+
+
+# --------------------------------------------------------------------------- #
+# trailing stop invariants
+# --------------------------------------------------------------------------- #
+def test_trailing_stop_invalid_when_atr_wider_than_price():
+    # A violently volatile low-priced name: 5*ATR22 exceeds the share price, so
+    # `peak - 5*ATR` is <= 0. A negative "stop" can never be breached, and the
+    # old code reported it as a real level with 止损状态=持有 forever.
+    rng = np.random.default_rng(3)
+    n = 120
+    close = 40 + np.cumsum(rng.normal(0, 6.0, n))     # huge daily ranges
+    close = np.clip(close, 5, None)
+    idx = pd.bdate_range("2026-01-01", periods=n)
+    df = pd.DataFrame({
+        "Open": close, "High": close * 1.35, "Low": close * 0.65,
+        "Close": close, "Volume": 1e6,
+    }, index=idx)
+    ts = scan.compute_trailing_stop(df, base_loc=n - 20, latest_loc=n - 1)
+    assert ts is not None
+    raw = ts["peak"] - scan.EXIT_TRAIL_ATR_MULT * ts["atr"]
+    assert raw <= 0, f"fixture no longer exercises the underflow (raw={raw:.2f})"
+    assert ts["stop"] is None and ts["stop_invalid"] is True
+
+
+def test_trailing_stop_valid_case_reports_positive_level():
+    close = np.linspace(100, 130, 120)
+    df = _ohlc_from_close(close)
+    ts = scan.compute_trailing_stop(df, base_loc=100, latest_loc=119)
+    assert ts is not None and ts["stop_invalid"] is False
+    assert ts["stop"] > 0 and ts["stop"] < ts["peak"]
+
+
+def test_trailing_stop_entry_bar_cannot_breach():
+    # A gap-down entry bar must not stop itself out on day 0.
+    close = np.r_[np.linspace(100, 101, 40), [70.0], np.linspace(70, 72, 10)]
+    df = _ohlc_from_close(close)
+    ts = scan.compute_trailing_stop(df, base_loc=40, latest_loc=40)
+    assert ts is not None and ts["breached"] is False
+
+
+# --------------------------------------------------------------------------- #
+# lifecycle: an unclosed (partial) bar must not become the recorded entry price
+# --------------------------------------------------------------------------- #
+def _sig_row(**kw):
+    row = {
+        "symbol": "AAA", "name": "Alpha", "板块": "01 测试",
+        "signal_date": pd.Timestamp("2026-06-01").date(),
+        "signal_type": "正式买入", "signal_side": "BUY",
+        "close": 100.0, "low": 99.0, "model": "D1_BUY_A_0出",
+        "extra_info": "", "Gann_1_date": pd.NaT, "Gann_1_price": np.nan,
+        "bar_partial": False,
+    }
+    row.update(kw)
+    return row
+
+
+def test_lifecycle_prefers_complete_bar_over_partial_for_same_signal():
+    # Same (symbol, date, type) seen twice: once mid-session (provisional price)
+    # and once after the close. The closed-bar price must win regardless of which
+    # run wrote last, or a mid-session snapshot is frozen in as 买入价 forever.
+    partial = _sig_row(close=548.16, bar_partial=True)
+    complete = _sig_row(close=552.05, bar_partial=False)
+    for order in ([partial, complete], [complete, partial]):
+        out = scan._collect_lifecycle_signal_rows(_empty_history_dir(), pd.DataFrame(order))
+        assert len(out) == 1
+        assert out.iloc[0]["close"] == 552.05, f"partial price won for order {order is not None}"
+
+
+def test_lifecycle_unknown_provenance_loses_to_known_complete():
+    legacy = _sig_row(close=10.0, bar_partial=np.nan)    # old file, no flag
+    complete = _sig_row(close=11.0, bar_partial=False)
+    out = scan._collect_lifecycle_signal_rows(_empty_history_dir(),
+                                              pd.DataFrame([complete, legacy]))
+    assert len(out) == 1 and out.iloc[0]["close"] == 11.0
+    # ...but a known-partial row still loses to the legacy unknown one
+    partial = _sig_row(close=9.0, bar_partial=True)
+    out2 = scan._collect_lifecycle_signal_rows(_empty_history_dir(),
+                                               pd.DataFrame([partial, legacy]))
+    assert len(out2) == 1 and out2.iloc[0]["close"] == 10.0
+
+
+# --------------------------------------------------------------------------- #
+# 第一观察点 tracker: the window rules must be decided inside the window
+# --------------------------------------------------------------------------- #
+def _tracker_df_run(symbol="AAA"):
+    return pd.DataFrame([{"symbol": symbol, "name": "Alpha", "group": "01 测试"}])
+
+
+def _run_tracker(rows, price_close_by_date=None, run_date=datetime(2026, 7, 30, 17, 0),
+                 min_days=14, entry_low=99.0):
+    """Drive the tracker offline with a stubbed price series."""
+    real = scan._fetch_price_series_for_tracker
+    try:
+        if price_close_by_date is None:
+            scan._fetch_price_series_for_tracker = lambda symbol: None
+        else:
+            idx = pd.DatetimeIndex([pd.Timestamp(d) for d in price_close_by_date])
+            closes = np.array(list(price_close_by_date.values()), dtype=float)
+            frame = pd.DataFrame(
+                {"Open": closes, "High": closes, "Low": closes,
+                 "Close": closes, "Volume": 1e6}, index=idx
+            )
+            scan._fetch_price_series_for_tracker = lambda symbol: frame.copy()
+        return scan._build_first_observation_tracker(
+            _empty_history_dir(), pd.DataFrame(rows), run_date,
+            _tracker_df_run(), min_days=min_days,
+        )
+    finally:
+        scan._fetch_price_series_for_tracker = real
+
+
+def test_tracker_confirm_outside_window_is_a_timeout_not_a_confirmation():
+    # The bug this pins: CEG's 2026-05-22 observation broke down within days, and
+    # a 二进宫 that landed 49 business days later was credited as "已确认".
+    obs_date = pd.Timestamp("2026-05-22").date()
+    rows = [
+        _sig_row(signal_type="第一观察点", signal_date=obs_date, close=100.0, low=99.0),
+        _sig_row(signal_type="二进宫买入点", signal_date=pd.Timestamp("2026-07-24").date()),
+    ]
+    # price never breaks the 99.0 entry low, so only the window rule decides
+    prices = {d: 105.0 for d in pd.bdate_range("2026-05-23", "2026-07-30")}
+    out = _run_tracker(rows, prices)
+    assert len(out) == 1
+    assert out.iloc[0]["状态"].startswith("移除（超过"), out.iloc[0]["状态"]
+    assert pd.isna(out.iloc[0]["二进宫确认日期"])
+
+
+def test_tracker_confirm_inside_window_is_confirmed():
+    obs_date = pd.Timestamp("2026-07-10").date()
+    rows = [
+        _sig_row(signal_type="第一观察点", signal_date=obs_date, close=100.0, low=99.0),
+        _sig_row(signal_type="二进宫买入点", signal_date=pd.Timestamp("2026-07-16").date()),
+    ]
+    prices = {d: 105.0 for d in pd.bdate_range("2026-07-11", "2026-07-30")}
+    out = _run_tracker(rows, prices)
+    assert out.iloc[0]["状态"] == "已确认（二进宫买入点）"
+    assert out.iloc[0]["二进宫确认日期"] == pd.Timestamp("2026-07-16").date()
+
+
+def test_tracker_break_below_starting_low_fires_and_beats_later_confirm():
+    obs_date = pd.Timestamp("2026-07-10").date()
+    rows = [
+        _sig_row(signal_type="第一观察点", signal_date=obs_date, close=100.0, low=99.0),
+        _sig_row(signal_type="二进宫买入点", signal_date=pd.Timestamp("2026-07-24").date()),
+    ]
+    prices = {d: 105.0 for d in pd.bdate_range("2026-07-11", "2026-07-30")}
+    prices[pd.Timestamp("2026-07-15")] = 90.0          # closes below the 99.0 low
+    out = _run_tracker(rows, prices)
+    assert out.iloc[0]["状态"] == "移除（跌破启动日低点）"
+    assert out.iloc[0]["跌破日期"] == pd.Timestamp("2026-07-15").date()
+
+
+def test_tracker_backfills_missing_low_from_prices():
+    # Rows written before the `low` column existed have entry_low = NaN. The old
+    # code skipped the break check entirely AND claimed "也未跌破启动日低点".
+    obs_date = pd.Timestamp("2026-07-10").date()
+    rows = [_sig_row(signal_type="第一观察点", signal_date=obs_date, close=100.0, low=np.nan)]
+    prices = {d: 105.0 for d in pd.bdate_range("2026-07-10", "2026-07-30")}
+    prices[pd.Timestamp("2026-07-10")] = 98.0          # the entry bar -> low backfills to 98.0
+    prices[pd.Timestamp("2026-07-15")] = 90.0          # below it
+    out = _run_tracker(rows, prices)
+    assert out.iloc[0]["低点来源"] == "补算"
+    assert out.iloc[0]["启动日低点"] == 98.0
+    assert out.iloc[0]["状态"] == "移除（跌破启动日低点）"
+
+
+def test_tracker_never_claims_no_break_when_low_is_unknown():
+    obs_date = pd.Timestamp("2026-05-22").date()
+    rows = [_sig_row(signal_type="第一观察点", signal_date=obs_date, close=100.0, low=np.nan)]
+    out = _run_tracker(rows, price_close_by_date=None)   # no price series at all
+    row = out.iloc[0]
+    assert row["低点来源"] == "缺失"
+    assert "无法判定" in row["移除原因"]
+    assert "未跌破" not in row["移除原因"]
+
+
+def test_tracker_still_watching_inside_window():
+    obs_date = pd.Timestamp("2026-07-28").date()
+    rows = [_sig_row(signal_type="第一观察点", signal_date=obs_date, close=100.0, low=99.0)]
+    prices = {d: 105.0 for d in pd.bdate_range("2026-07-28", "2026-07-30")}
+    out = _run_tracker(rows, prices)
+    assert out.iloc[0]["状态"] == "观察中"
+
+
+def test_tracker_column_set_is_stable_across_branches():
+    # The column set used to depend on which branch fired first (二进宫确认日期 /
+    # 跌破日期 are branch-only keys), so the sheet's shape moved run to run.
+    obs = pd.Timestamp("2026-07-10").date()
+    watching = [_sig_row(signal_type="第一观察点", signal_date=pd.Timestamp("2026-07-29").date())]
+    confirmed = [
+        _sig_row(signal_type="第一观察点", signal_date=obs),
+        _sig_row(signal_type="二进宫买入点", signal_date=pd.Timestamp("2026-07-16").date()),
+    ]
+    prices = {d: 105.0 for d in pd.bdate_range("2026-07-10", "2026-07-30")}
+    a = _run_tracker(watching, prices)
+    b = _run_tracker(confirmed, prices)
+    assert list(a.columns) == list(b.columns) == scan.FIRST_OBS_TRACKER_COLS
+    empty = _run_tracker([_sig_row(signal_type="正式买入")], prices)
+    assert list(empty.columns) == scan.FIRST_OBS_TRACKER_COLS and empty.empty
+
+
+def test_persisted_signal_schema_includes_tracker_inputs():
+    # RawSignals in history/ is the system's long-term memory; the lifecycle and
+    # 第一观察点 trackers read these back out of old workbooks. A column that is
+    # computed but not listed here is silently dropped on the way to disk.
+    for col in ["low", "bar_partial", "Gann_0", "Gann_gain_pct", "buy_score_raw",
+                "close", "signal_date", "signal_type"]:
+        assert col in scan.SIGNAL_COL_ORDER, f"{col} would not be persisted"
+    assert len(set(scan.SIGNAL_COL_ORDER)) == len(scan.SIGNAL_COL_ORDER), "duplicate column"
 
 
 # --------------------------------------------------------------------------- #
