@@ -1,0 +1,184 @@
+// This Pine Script(R) code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © bigbenv5
+
+//@version=6
+// ============================================================================
+// 黄金长线配置系统 / Gold Long-Term Allocation System
+//
+// 用途：1年以上持有的黄金 sleeve（配置仓），不是交易系统。
+// Purpose: a 1yr+ gold ALLOCATION sleeve. This is not a trading system.
+//
+// 研究结论（26年 GC=F 日线，2000-2026，_gold_*.py）：
+//   • 趋势线 = 500日 SMA + 正负2% 迟滞带(hysteresis band)。
+//     Sharpe 0.586 vs 买入持有 0.517；MaxDD -30.6% vs -44.4%；26年仅12次翻转。
+//     裸穿越有65次、状态中位数只有6天 —— 迟滞带把它降到12次，而且 Sharpe 还更高。
+//   • 长度不需要纠结：470-580日是同一个平台，480/490/500/510/520 有 99.6% 的日子
+//     给出相同答案。SMA 与 EMA 在同长度下无统计差异（EMA 31次里赢14次）。
+//   • 趋势读数【不改变仓位】。任何按趋势加减仓的做法都输给固定20%
+//     （固定 0.476 vs 25/15 档 0.437 vs 30/10 档 0.387），28%收藏品税吃掉了信号价值。
+//   • 46个候选信号（观海引擎、break3avg、85日MA、5xATR、DXY、利率、VIX、VVIX、
+//     GVZ、MOVE、SKEW、滚动相关性）没有一个能通过 bootstrap 检验。
+//     其中所有“压力”类指标都是负贡献：黄金在 VIX 飙升时表现更差，不是更好。
+//     黄金对冲的是货币贬值/实际利率，不是波动率。
+//
+// 用法 / How to use:
+//   1. 挂在【日线】上（系统就是日线标定的）。标的：GC1!、XAUUSD、GLD 或 IAU。
+//   2. 看表格里的 STATE：UPTREND / DOWNTREND / IN BAND。
+//   3. 在 Position 输入框填当前黄金市值和组合总市值，表格会给出 加仓/减仓/持有。
+//   4. 每月看一次就够。日内变化没有意义。
+// ============================================================================
+
+indicator(title="黄金长线配置系统 Gold Sleeve System", shorttitle="Gold Sleeve", overlay=true,
+     format=format.price, precision=2, max_labels_count=100, max_bars_back=1000)
+
+//=============================//
+// 0) 输入 / Inputs
+//=============================//
+grp_t = "趋势线 / Trend filter"
+maLen   = input.int(500, "趋势长度(日) Trend length (days)", minval=100, maxval=800, step=10, group=grp_t,
+     tooltip="500 = 已验证的默认值。470-580 是同一个平台，改这个数字基本不会改变答案（99.6%的日子相同）。")
+bandPct = input.float(2.0, "迟滞带 Hysteresis band (%)", minval=0.0, maxval=10.0, step=0.5, group=grp_t,
+     tooltip="状态只在价格穿越 MA 正负这个百分比后才改变。设为0会退回裸穿越：26年65次翻转，状态中位数6天。")
+useEma  = input.bool(false, "用 EMA 代替 SMA / Use EMA instead", group=grp_t,
+     tooltip="同长度下两者无统计差异。SMA 保留是因为迟滞带下翻转更少(12 vs 20)。")
+
+grp_e = "集合投票 / Ensemble vote"
+showVote = input.bool(true, "显示集合投票 Show ensemble vote", group=grp_e,
+     tooltip="10条不同长度的MA投票。单一长度是虚假精度：当前 >=330日说上涨，更短的说下跌。")
+
+grp_r = "参考线(不属于系统) / Reference only"
+show85  = input.bool(false, "85日MA (已测试：无效)", group=grp_r, tooltip="测试过，加到500日上面反而变差 (-0.265 Sharpe)。仅供参考。")
+show200 = input.bool(false, "200日MA (已测试：比不做还差)", group=grp_r, tooltip="黄金上 200日MA 排名 31/49，Sharpe 0.439 < 买入持有 0.517。")
+
+grp_p = "仓位 / Position"
+tgtW    = input.float(20.0, "目标权重 Target weight (%)", minval=0.0, maxval=100.0, step=1.0, group=grp_p)
+bandW   = input.float(50.0, "再平衡带 Rebalance band (%, relative)", minval=10.0, maxval=100.0, step=5.0, group=grp_p,
+     tooltip="正负50% 相对带：20%目标 -> 超过30%减仓，低于10%加仓。26年只触发6次，累计税负0.6%。")
+goldVal = input.float(0.0, "当前黄金市值 Current gold value ($)", minval=0.0, group=grp_p)
+portVal = input.float(0.0, "组合总市值 Total portfolio ($)", minval=0.0, group=grp_p)
+
+grp_v = "显示 / Display"
+showBg  = input.bool(true, "状态背景色 State background", group=grp_v)
+tblPos  = input.string("top_right", "表格位置 Table position", options=["top_right", "top_left", "bottom_right", "bottom_left"], group=grp_v)
+
+//=============================//
+// 1) 工具函数 / Helpers
+//=============================//
+f_ma(src, len) => useEma ? ta.ema(src, len) : ta.sma(src, len)
+f_pct(x) => str.tostring(x, "#.#") + "%"
+f_px(x)  => str.tostring(x, "#,###.##")
+
+//=============================//
+// 2) 趋势状态机（带迟滞） / Trend state machine with hysteresis
+//=============================//
+ma    = f_ma(close, maLen)
+band  = bandPct / 100.0
+upper = ma * (1.0 + band)
+lower = ma * (1.0 - band)
+
+// 状态只在价格清楚地穿过带子时改变；带子内部保持前一个状态。
+// State only flips when price clears the band; inside the band it holds.
+var int trendState = 1          // 1 = uptrend, 0 = downtrend
+if not na(ma)
+    if close > upper
+        trendState := 1
+    else if close < lower
+        trendState := 0
+
+isUp     = trendState == 1
+inBand   = not na(ma) and close <= upper and close >= lower
+stateTxt = inBand ? "IN BAND (保持前值)" : (isUp ? "UPTREND 上涨" : "DOWNTREND 下跌")
+extPct   = na(ma) ? na : (close / ma - 1.0) * 100.0
+// 翻转价：上涨态要跌到下带才翻转，下跌态要涨到上带才翻转。
+flipPx   = isUp ? lower : upper
+flipDist = na(flipPx) ? na : (flipPx / close - 1.0) * 100.0
+
+//=============================//
+// 3) 集合投票 / Ensemble vote
+//    10条固定长度，取代“选一个长度”。已测长度 40-520；这里取等距10条做视觉近似。
+//=============================//
+v1  = close > f_ma(close, 50)  ? 1 : 0
+v2  = close > f_ma(close, 100) ? 1 : 0
+v3  = close > f_ma(close, 150) ? 1 : 0
+v4  = close > f_ma(close, 200) ? 1 : 0
+v5  = close > f_ma(close, 250) ? 1 : 0
+v6  = close > f_ma(close, 300) ? 1 : 0
+v7  = close > f_ma(close, 350) ? 1 : 0
+v8  = close > f_ma(close, 400) ? 1 : 0
+v9  = close > f_ma(close, 450) ? 1 : 0
+v10 = close > f_ma(close, 500) ? 1 : 0
+voteUp  = v1 + v2 + v3 + v4 + v5 + v6 + v7 + v8 + v9 + v10
+votePct = voteUp * 10.0
+
+//=============================//
+// 4) 仓位建议 / Position guidance
+//=============================//
+curW    = portVal > 0.0 ? goldVal / portVal * 100.0 : na
+hiW     = tgtW * (1.0 + bandW / 100.0)
+loW     = tgtW * (1.0 - bandW / 100.0)
+posTxt  = na(curW) ? "填入市值以获得建议" :
+     curW > hiW ? "减仓到 " + f_pct(tgtW) + " / TRIM" :
+     curW < loW ? "加仓到 " + f_pct(tgtW) + " / TOP UP" : "持有，不动 / HOLD"
+posCol  = na(curW) ? color.gray : (curW > hiW or curW < loW) ? color.new(color.orange, 0) : color.new(color.teal, 0)
+// 需要买/卖多少
+tradeAmt = na(curW) or portVal <= 0.0 ? na : (tgtW / 100.0 * portVal) - goldVal
+
+//=============================//
+// 5) 绘图 / Plots
+//=============================//
+maCol = isUp ? color.new(color.teal, 0) : color.new(color.red, 0)
+pMa   = plot(ma,    "趋势MA Trend MA", color=maCol, linewidth=2)
+pUp   = plot(upper, "上带 Upper band", color=color.new(color.gray, 55), linewidth=1)
+pLo   = plot(lower, "下带 Lower band", color=color.new(color.gray, 55), linewidth=1)
+fill(pUp, pLo, color=color.new(color.gray, 92), title="迟滞带 Hysteresis band")
+
+// 参考线：ta.* 必须在三元表达式外面先算好，否则每根K线的调用路径不一致。
+// Reference MAs: compute ta.* OUTSIDE the plot ternary, or the call path varies per bar.
+ma85  = f_ma(close, 85)
+ma200 = f_ma(close, 200)
+plot(show85  ? ma85  : na, "85日MA (参考)",  color=color.new(color.orange, 40), linewidth=1)
+plot(show200 ? ma200 : na, "200日MA (参考)", color=color.new(color.purple, 40), linewidth=1)
+
+bgcolor(showBg and not na(ma) ? (inBand ? color.new(color.yellow, 94) : (isUp ? color.new(color.teal, 94) : color.new(color.red, 94))) : na, title="状态背景")
+
+// 状态翻转标记
+flippedUp   = trendState == 1 and trendState[1] == 0
+flippedDown = trendState == 0 and trendState[1] == 1
+plotshape(flippedUp,   "转为上涨 -> UPTREND",   style=shape.triangleup,   location=location.belowbar, color=color.new(color.teal, 0), size=size.small)
+plotshape(flippedDown, "转为下跌 -> DOWNTREND", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0),  size=size.small)
+
+//=============================//
+// 6) 信息表 / Info table
+//=============================//
+tPos = tblPos == "top_left" ? position.top_left : tblPos == "bottom_right" ? position.bottom_right : tblPos == "bottom_left" ? position.bottom_left : position.top_right
+var table tb = table.new(tPos, 2, 12, border_width=1, frame_width=1, frame_color=color.new(color.gray, 50))
+
+f_row(int rw, string k, string v, color vc) =>
+    table.cell(tb, 0, rw, k, text_size=size.small, text_color=color.new(color.gray, 10), text_halign=text.align_left,  bgcolor=color.new(color.gray, 92))
+    table.cell(tb, 1, rw, v, text_size=size.small, text_color=vc,                        text_halign=text.align_right, bgcolor=color.new(color.gray, 92))
+
+if barstate.islast
+    notDaily = timeframe.period != "D"
+    stCol = inBand ? color.new(color.orange, 0) : (isUp ? color.new(color.teal, 0) : color.new(color.red, 0))
+    table.cell(tb, 0, 0, "黄金长线配置 Gold Sleeve", text_size=size.small, text_color=color.white, bgcolor=color.new(color.blue, 20))
+    table.cell(tb, 1, 0, useEma ? "EMA " + str.tostring(maLen) : "SMA " + str.tostring(maLen), text_size=size.small, text_color=color.white, bgcolor=color.new(color.blue, 20))
+    f_row(1,  "状态 STATE",            stateTxt,                                stCol)
+    f_row(2,  "收盘 Close",            f_px(close),                             color.new(color.gray, 10))
+    f_row(3,  "趋势MA Trend MA",       f_px(ma),                                color.new(color.gray, 10))
+    f_row(4,  "偏离 Extension",        f_pct(extPct),                           extPct >= 0 ? color.new(color.teal, 0) : color.new(color.red, 0))
+    f_row(5,  "翻转价 Flip price",     f_px(flipPx) + "  (" + f_pct(flipDist) + ")", color.new(color.gray, 10))
+    f_row(6,  showVote ? "集合投票 Vote" : "带 Band",
+              showVote ? str.tostring(voteUp) + "/10 = " + f_pct(votePct) : f_px(lower) + " - " + f_px(upper),
+              showVote ? (votePct >= 60.0 ? color.new(color.teal, 0) : votePct <= 40.0 ? color.new(color.red, 0) : color.new(color.orange, 0)) : color.new(color.gray, 10))
+    f_row(7,  "目标权重 Target",       f_pct(tgtW) + "  带 " + f_pct(loW) + "-" + f_pct(hiW), color.new(color.gray, 10))
+    f_row(8,  "当前权重 Current",      na(curW) ? "—" : f_pct(curW),            color.new(color.gray, 10))
+    f_row(9,  "动作 ACTION",           posTxt,                                  posCol)
+    f_row(10, "买/卖 Trade",           na(tradeAmt) ? "—" : (tradeAmt >= 0 ? "买 BUY $" : "卖 SELL $") + str.tostring(math.abs(tradeAmt), "#,###"), color.new(color.gray, 10))
+    f_row(11, "提醒 Note",             notDaily ? "⚠ 请用日线 USE DAILY TF" : "每月看一次即可",
+              notDaily ? color.new(color.red, 0) : color.new(color.gray, 30))
+
+//=============================//
+// 7) 警报 / Alerts
+//=============================//
+alertcondition(flippedUp,   title="黄金转为上涨 Gold -> UPTREND",   message="Gold trend state flipped to UPTREND (closed above the {{interval}} band).")
+alertcondition(flippedDown, title="黄金转为下跌 Gold -> DOWNTREND", message="Gold trend state flipped to DOWNTREND (closed below the band). Re-read the thesis; do NOT auto-sell.")
