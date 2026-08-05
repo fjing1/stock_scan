@@ -242,6 +242,13 @@ def _extract_anchor_signals(history_dir: Path, current_df: pd.DataFrame, signal_
     all_sig["buy_score"] = pd.to_numeric(all_sig["buy_score"], errors="coerce")
     if signal_side == "SELL":
         all_sig = all_sig[all_sig["signal_type"] == "正式卖出"]
+    else:
+        # 回调买入点 is entry TIMING, not a buy signal: it must not open a D0 tracked batch or
+        # reach the TV buy list on its own. It still appears in RawSignals / the dashboard, and
+        # it still enriches d0_rule when it coincides with a real buy on the same symbol+date.
+        real_buys = all_sig["signal_type"] != "回调买入点"
+        keyed = all_sig[real_buys][["symbol", "signal_date"]].drop_duplicates()
+        all_sig = all_sig.merge(keyed, on=["symbol", "signal_date"], how="inner")
     if all_sig.empty:
         return pd.DataFrame(columns=["symbol", "signal_date", "d0_close", "d0_rule"])
 
@@ -432,7 +439,7 @@ tr:hover { background: #f8fbff; }
 <body>
 <div class=\"wrap\">
 <h1>XL Signal Dashboard</h1>
-<div class=\"sub\">Run: {run_time} · 第一观察点=低位首绿柱(预备观察) · 二进宫买入点=回踩不破后再次绿柱 · 预警买入=4H BUY A/0出 · 正式买入=日线 BUY A/0出 · 预警卖出=4H 1出 · 正式卖出=日线 1出</div>
+<div class=\"sub\">Run: {run_time} · 第一观察点=低位首绿柱(预备观察) · 二进宫买入点=回踩不破后再次绿柱 · 预警买入=4H BUY A/0出 · 正式买入=日线 BUY A/0出 · 预警卖出=4H 1出 · 正式卖出=日线 1出 · 回调买入点=上升趋势斐波那契回调(仅择时参考)</div>
 <table>
 <thead><tr>
 <th>方向</th><th>日期</th><th>代码</th><th>名称</th><th>板块</th><th>信号</th><th>模型</th>
@@ -2241,6 +2248,13 @@ def score_buy_signal_row_raw(row: pd.Series) -> float:
         score += 16
     elif signal_type == "第一观察点":
         score += 10
+    elif signal_type == "回调买入点":
+        # Deliberately the lowest weight of any BUY type. The pullback rule is the only thing
+        # that survived the Elliott study, but what survived is entry TIMING, not an edge — its
+        # forward return is roughly the market's return in an uptrend, and the wave-label version
+        # was no better (t=+1.39, CI spanning zero). +4 keeps it visible and sortable without
+        # letting it outrank a 正式买入.
+        score += 4
     if "BUY_A" in model or "0出" in model:
         score += 8
 
@@ -3273,6 +3287,104 @@ def add_low_start_buy_points(df):
 
 # ================= 扫描一个股票 =================
 
+# ---- 回调买入点 / pullback-in-uptrend -------------------------------------- #
+# The only rule that survived the 2026-08 Elliott Wave study (elliott_system.py,
+# _ew_verify.py). Mechanical Elliott turned out to be pullback-buying with extra steps:
+# the wave LABELS added nothing over the raw geometry once the missing rules (p3>p1,
+# p4>p2) were enforced and the control was matched within symbol — the label effect fell
+# to t=+1.39 with a CI spanning zero. What remains is the geometry itself.
+#
+# DELIBERATELY SCORED LOW. This is an entry-TIMING aid for a buy you were going to make
+# anyway, not an edge: its forward return is roughly the market's return in an uptrend.
+# See score_buy_signal_row.
+#
+# NO LOOKAHEAD: a ZigZag swing low is only KNOWN once price has risen `thr` off it, so the
+# signal is stamped at the CONFIRMATION bar, never at the pivot bar. Getting this wrong
+# overstates forward returns by 1.7x-9.8x (measured), and the overstatement grows with the
+# threshold — a naive sweep therefore picks the largest threshold and is maximally wrong.
+PULLBACK_MA_LEN = 200          # uptrend filter
+PULLBACK_ZIGZAG_THR = 0.05     # swing threshold; this is also the confirmation distance
+PULLBACK_FIB = (0.382, 0.786)  # conventional retracement zone, fixed in advance, not fitted
+
+
+def _zigzag_pivots(close: np.ndarray, thr: float) -> list:
+    """Alternating swing highs/lows, each carrying the bar at which it became knowable.
+
+    Returns dicts {pos, price, kind, confirm}. ``pos`` is where the extreme occurred and is
+    for plotting only; ``confirm`` is the first bar on which a real-time observer could have
+    known the pivot existed. Signals must use ``confirm``.
+    """
+    piv = []
+    n = len(close)
+    if n < 2:
+        return piv
+    mode = "up"                       # tracking a rising extreme, looking for a HIGH
+    ext_i, ext_v = 0, close[0]
+    for i in range(1, n):
+        if not np.isfinite(close[i]):
+            continue
+        if mode == "up":
+            if close[i] > ext_v:
+                ext_i, ext_v = i, close[i]
+            elif close[i] <= ext_v * (1.0 - thr):
+                piv.append({"pos": ext_i, "price": ext_v, "kind": "H", "confirm": i})
+                mode = "down"
+                ext_i, ext_v = i, close[i]
+        else:
+            if close[i] < ext_v:
+                ext_i, ext_v = i, close[i]
+            elif close[i] >= ext_v * (1.0 + thr):
+                piv.append({"pos": ext_i, "price": ext_v, "kind": "L", "confirm": i})
+                mode = "up"
+                ext_i, ext_v = i, close[i]
+    return piv
+
+
+def add_pullback_entry(df: pd.DataFrame, ma_len: int = PULLBACK_MA_LEN,
+                       thr: float = PULLBACK_ZIGZAG_THR,
+                       fib: tuple = PULLBACK_FIB) -> pd.DataFrame:
+    """
+    回调买入点：上升趋势中的斐波那契回调确认点。
+
+    Fires on the CONFIRMATION bar of a swing low when all three hold:
+      1. close > the `ma_len` moving average (an established uptrend), and
+      2. the pullback retraced `fib` of the immediately preceding up-leg
+         (prev swing low -> swing high -> this swing low), and
+      3. the swing low is confirmed, i.e. price has already risen `thr` off it.
+
+    Needs ma_len + a few pivots of history; on the scan's 1y frame only the last ~50 bars
+    can carry a valid 200d MA, which is enough for the recent-window emission but means
+    this column is NaN-heavy earlier in the frame. That is expected.
+    """
+    out = df.copy()
+    close = out["Close"].to_numpy(dtype=float)
+    ma = out["Close"].rolling(ma_len).mean().to_numpy(dtype=float)
+    n = len(out)
+    sig = np.zeros(n, dtype=bool)
+    retr = np.full(n, np.nan)
+    depth = np.full(n, np.nan)
+
+    piv = _zigzag_pivots(close, thr)
+    for i in range(2, len(piv)):
+        if piv[i]["kind"] != "L" or piv[i - 1]["kind"] != "H" or piv[i - 2]["kind"] != "L":
+            continue
+        c = piv[i]["confirm"]
+        if c >= n or not np.isfinite(ma[c]) or close[c] <= ma[c]:
+            continue
+        hi, lo, prev_lo = piv[i - 1]["price"], piv[i]["price"], piv[i - 2]["price"]
+        if hi <= prev_lo or hi <= lo:
+            continue
+        r = (hi - lo) / (hi - prev_lo)
+        if fib[0] <= r <= fib[1]:
+            sig[c] = True
+            retr[c] = r
+            depth[c] = lo / hi - 1.0        # drawdown from the swing high
+    out["PULLBACK_BUY"] = sig
+    out["PULLBACK_RETRACE"] = retr
+    out["PULLBACK_DEPTH"] = depth
+    return out
+
+
 def scan_one_symbol(sym, name, xl: XunLongIndicator, *, daily_fetcher=None, h4_fetcher=None):
     # Data access is injectable: dashboards / tests / alternate providers can
     # pass their own fetchers. Defaults resolve to the module-level downloaders
@@ -3296,6 +3408,7 @@ def scan_one_symbol(sym, name, xl: XunLongIndicator, *, daily_fetcher=None, h4_f
     df_v2_reset = add_buy_low_reset_4h_green(df_xl)
     df_v2_reset_confirmed = add_buy_low_reset_confirmed(df_v2_reset)
     df_low_start = add_low_start_buy_points(df_v2_reset_confirmed)
+    df_pullback = add_pullback_entry(df_xl)
 
     df_all = df_xl.join(df_v1[["V1_Buy"]]).join(
         df_v2[["EMA8_d", "SMA13_d", "SMA21_d", "RSI_simple", "DailyStrong"]]
@@ -3303,6 +3416,8 @@ def scan_one_symbol(sym, name, xl: XunLongIndicator, *, daily_fetcher=None, h4_f
         df_v2_reset_confirmed[["BUY_low_reset_4h_green", "BUY_low_reset_confirmed"]]
     ).join(
         df_low_start[["LOW_START_GREEN", "LOW_START_FIRST_BUY", "LOW_START_SECOND_BUY"]]
+    ).join(
+        df_pullback[["PULLBACK_BUY", "PULLBACK_RETRACE", "PULLBACK_DEPTH"]]
     )
 
     rows = []
@@ -3357,6 +3472,19 @@ def scan_one_symbol(sym, name, xl: XunLongIndicator, *, daily_fetcher=None, h4_f
             append_signal(
                 idx, row, "二进宫买入点", "BUY", "LOW_START_SECOND_GREEN",
                 f"首绿后回踩不破结构，再次绿柱确认; Rank120={row.get('Rank120', np.nan):.2f}; L2={row.get('L2_trend', np.nan):.2f}; 分金={row.get('FJ_value', np.nan):.2f}"
+            )
+
+    # 回调买入点：上升趋势中的斐波那契回调（Elliott 研究的唯一幸存规则，见 add_pullback_entry）
+    # 只是入场择时参考，不是 edge —— 打分刻意压低，不进入优先买入清单。
+    if "PULLBACK_BUY" in df_all.columns:
+        recent = df_all[df_all["PULLBACK_BUY"].fillna(False).astype(bool) & daily_recent_mask]
+        for idx, row in recent.iterrows():
+            _r = pd.to_numeric(row.get("PULLBACK_RETRACE", np.nan), errors="coerce")
+            _d = pd.to_numeric(row.get("PULLBACK_DEPTH", np.nan), errors="coerce")
+            append_signal(
+                idx, row, "回调买入点", "BUY", "PULLBACK_FIB_CONFIRM",
+                f"上升趋势(>{PULLBACK_MA_LEN}日均线)中回调 {_r:.0%} 已确认; "
+                f"自波段高点回撤 {_d:.1%}; 仅择时参考，非独立买入信号"
             )
 
     # 预警买入：4H BUY A / 4H 0出

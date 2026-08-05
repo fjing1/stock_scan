@@ -595,6 +595,109 @@ def test_persisted_signal_schema_includes_tracker_inputs():
 
 
 # --------------------------------------------------------------------------- #
+# 回调买入点 / pullback entry — the one rule that survived the Elliott study
+# --------------------------------------------------------------------------- #
+def _uptrend_with_pullback(retrace: float, n_base: int = 240) -> pd.DataFrame:
+    """
+    Build the exact geometry the rule looks for: prev swing LOW -> swing HIGH -> pullback LOW,
+    with a final bounce so that last low gets CONFIRMED.
+
+    The initial dip matters: ZigZag only records a swing low once price has risen off it, so a
+    smooth monotonic base yields no low pivot at all and the rule can never see three pivots.
+    """
+    base = np.linspace(100.0, 150.0, n_base)      # establishes the 200d MA below price
+    dip = np.linspace(150.0, 140.0, 10)           # -6.7%: records the H(150), sets up L(140)
+    up = np.linspace(140.0, 200.0, 30)            # the up-leg 140 -> 200, confirms L(140)
+    low = 200.0 - retrace * (200.0 - 140.0)       # pullback retracing `retrace` of that leg
+    down = np.linspace(200.0, low, 20)
+    bounce = np.linspace(low, low * 1.10, 15)     # +10% confirms the pullback low
+    return _ohlc_from_close(np.r_[base, dip, up, down, bounce])
+
+
+def test_pullback_fires_inside_the_fib_zone():
+    df = _uptrend_with_pullback(0.60)             # 60% retrace: inside 38.2-78.6%
+    out = scan.add_pullback_entry(df)
+    assert out["PULLBACK_BUY"].any(), "a 60% retracement in an uptrend should fire"
+    hit = out.index[out["PULLBACK_BUY"]][0]
+    r = float(out.loc[hit, "PULLBACK_RETRACE"])
+    assert 0.382 <= r <= 0.786, f"recorded retracement {r} outside the zone"
+
+
+def test_pullback_silent_outside_the_fib_zone():
+    # 20% is too shallow, 95% breaks the structure — neither is the target geometry.
+    # The 60% case is asserted to fire elsewhere, so these are not vacuous passes.
+    for retrace in (0.20, 0.95):
+        out = scan.add_pullback_entry(_uptrend_with_pullback(retrace))
+        assert not out["PULLBACK_BUY"].any(), f"{retrace:.0%} retracement should not fire"
+
+
+def test_pullback_requires_an_uptrend():
+    # identical geometry, but riding a long decline so price sits below the 200d MA
+    close = np.r_[np.linspace(300.0, 100.0, 240), np.linspace(100.0, 93.0, 10),
+                  np.linspace(93.0, 133.0, 30), np.linspace(133.0, 109.0, 20),
+                  np.linspace(109.0, 120.0, 15)]
+    df = _ohlc_from_close(close)
+    # sanity: the fixture must be below the MA, else the test passes for the wrong reason
+    ma = df["Close"].rolling(scan.PULLBACK_MA_LEN).mean()
+    assert (df["Close"].iloc[-40:] < ma.iloc[-40:]).all(), "fixture is not below the MA"
+    out = scan.add_pullback_entry(df)
+    assert not out["PULLBACK_BUY"].any(), "must not fire below the trend MA"
+
+
+def test_pullback_fires_at_confirmation_not_at_the_pivot():
+    """THE lookahead test. A swing low is only knowable after price rises off it by the
+    threshold; stamping the signal at the pivot bar overstates forward returns 1.7x-9.8x."""
+    df = _uptrend_with_pullback(0.60)
+    out = scan.add_pullback_entry(df)
+    hit = out.index[out["PULLBACK_BUY"]][0]
+    hit_pos = out.index.get_loc(hit)
+    lo_pos = int(np.argmin(out["Close"].to_numpy()[:hit_pos + 1][-40:])) + max(0, hit_pos - 39)
+    assert hit_pos > lo_pos, "signal must be dated AFTER the swing low, not on it"
+    # and price must already have risen at least the threshold off that low
+    rise = out["Close"].iloc[hit_pos] / out["Close"].iloc[lo_pos] - 1
+    assert rise >= scan.PULLBACK_ZIGZAG_THR - 1e-9, (
+        f"only rose {rise:.3%} off the low; confirmation needs "
+        f"{scan.PULLBACK_ZIGZAG_THR:.1%}")
+
+
+def test_pullback_signal_is_causal_on_a_growing_prefix():
+    """Re-running on data[:t] must reproduce a prefix of the full-history signals. If a
+    later bar can change an earlier signal, the detector repaints and the backtest is void."""
+    df = _uptrend_with_pullback(0.60)
+    full = scan.add_pullback_entry(df)["PULLBACK_BUY"]
+    for cut in (len(df) - 1, len(df) - 5, len(df) - 12):
+        part = scan.add_pullback_entry(df.iloc[:cut])["PULLBACK_BUY"]
+        assert (part.to_numpy() == full.iloc[:cut].to_numpy()).all(), (
+            f"signals changed when data was truncated at {cut} — the detector repaints")
+
+
+def test_pullback_scores_below_every_real_buy_type():
+    base = {"signal_side": "BUY", "model": "PULLBACK_FIB_CONFIRM",
+            "rank120": 0.50, "RSI": 50.0}
+    pb = scan.score_buy_signal_row(pd.Series({**base, "signal_type": "回调买入点"}))
+    for stronger in ("第一观察点", "预警买入", "二进宫买入点", "正式买入"):
+        s = scan.score_buy_signal_row(pd.Series({**base, "signal_type": stronger}))
+        assert pb < s, f"回调买入点 ({pb}) must score below {stronger} ({s})"
+
+
+def test_pullback_alone_does_not_create_a_tracked_position():
+    """It's entry timing, not a buy. On its own it must not open a D0 batch or reach the
+    TV buy list; alongside a real buy on the same symbol+date it may enrich the rule text."""
+    d = pd.Timestamp("2026-07-01").date()
+    only_pb = pd.DataFrame([_sig_row(signal_type="回调买入点", signal_date=d, close=50.0)])
+    out = scan._extract_anchor_signals(_empty_history_dir(), only_pb, signal_side="BUY")
+    assert out.empty, "a lone 回调买入点 must not become a tracked anchor"
+
+    with_real = pd.DataFrame([
+        _sig_row(signal_type="回调买入点", signal_date=d, close=50.0),
+        _sig_row(signal_type="正式买入", signal_date=d, close=50.0),
+    ])
+    out2 = scan._extract_anchor_signals(_empty_history_dir(), with_real, signal_side="BUY")
+    assert len(out2) == 1, "a real buy on the same date should still anchor"
+    assert "回调买入点" in str(out2.iloc[0]["d0_rule"])
+
+
+# --------------------------------------------------------------------------- #
 # tiny runner (so it works without pytest)
 # --------------------------------------------------------------------------- #
 def _run_all() -> int:
