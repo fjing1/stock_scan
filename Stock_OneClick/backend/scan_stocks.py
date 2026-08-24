@@ -1061,6 +1061,32 @@ def build_combo_regime(tickers=("SPY", "QQQ")) -> list:
     return lines
 
 
+def build_btc_regime() -> list:
+    """EOD reading for the long-term-hold BTC trend overlay (see btc_system.py). Buy-and-hold is
+    the DEFAULT — the ensemble vote is a risk dashboard (current regime, drawdown depth), not a
+    trade mandate, because realistic short-term-gains tax drag erodes most of its pre-tax edge
+    over buy-and-hold for a taxable account (full derivation in btc_system.py / _btc_trend_research.py).
+    Kept decoupled from the stock VCP/Gann scoring pipeline, same as gold_system.py — BTC's signal
+    is a different model (SMA ensemble vote) and doesn't map onto that score's columns."""
+    import btc_system as BTC
+
+    try:
+        df = download_daily("BTC-USD", period="3y")
+    except Exception as exc:
+        return [f"   BTC-USD: 数据获取失败 ({exc})"]
+    if df is None or len(df) < 220:
+        return ["   BTC-USD: 数据不足，跳过"]
+    price = df["Close"].astype(float)
+    cr = BTC.current_reading(price)
+    flip_note = "（今日翻转）" if cr["flipped_today"] else ""
+    return [
+        f"   BTC-USD: 收{cr['price']:,.0f} | 集成SMA投票{cr['vote_frac']*100:.0f}%看多{flip_note} | "
+        f"状态 {cr['state']} | 距历史高点{cr['drawdown_from_ath']*100:.1f}% | "
+        f"距52周高{cr['pct_from_52w_high']*100:+.1f}% | 默认长期持有(买入持有)；本读数为风险仪表盘，"
+        f"非交易信号 — 短线资本利得税拖累研究见btc_system.py"
+    ]
+
+
 def build_market_context(run_dt: datetime) -> dict:
     as_of_date = run_dt.date()
     xl = XunLongIndicator()
@@ -3839,6 +3865,13 @@ def main():
             print(_ln, flush=True)
     except Exception as _exc:
         print(f"⚠️ COMBO regime 读取失败：{_exc}", flush=True)
+
+    try:
+        print("✅ BTC长线读数 (集成SMA投票, 默认买入持有; 详见btc_system.py):", flush=True)
+        for _ln in build_btc_regime():
+            print(_ln, flush=True)
+    except Exception as _exc:
+        print(f"⚠️ BTC regime 读取失败：{_exc}", flush=True)
 
     archived_files = []
     for dt_key in combined_completed_dates:

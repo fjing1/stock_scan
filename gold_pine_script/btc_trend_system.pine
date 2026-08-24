@@ -1,0 +1,159 @@
+// This Pine Script(R) code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © bigbenv5
+
+//@version=6
+// ============================================================================
+// BTC长线趋势系统 / BTC Long-Term Trend System
+//
+// 用途：长期持有 BTC 的风险仪表盘 + 可选的低频（检查每日、翻转约每月）趋势覆盖层。
+// Purpose: a risk dashboard for a long-term BTC hold, plus an OPTIONAL low-frequency
+// (checked daily, flips roughly monthly) trend overlay. This is NOT a day-trading system.
+//
+// 研究结论（11.9年 BTC-USD 日线，2014-2026，btc_system.py / _btc_trend_research.py）：
+//   • 与本仓库对黄金/股票的趋势跟踪研究不同 —— BTC 的趋势覆盖层对买入持有【确有】
+//     经 bootstrap 验证的税前优势（P[跟踪策略反而更差]<2%）。原因：BTC 历史上经历过
+//     少数几次巨大、跨年的牛熊周期，跌幅动辄 -65%到-93%，这给趋势跟踪提供了黄金研究
+//     中缺乏的机制。
+//   • 但选定【单一】长度不可靠：75个(长度,带宽)组合的 PBO（过拟合概率）= 53.8%，
+//     基本等于随机。集合投票（11个长度，各自独立迟滞带，>=70%同意才算多头）比任何
+//     单一长度表现都好（税前 Sharpe 1.71 vs 最优单长度 1.59），翻转次数更少
+//     (83次/11.9年 vs 265次)，最大回撤更浅(-49% vs -59%)。
+//   • 真正的成本不是交易手续费(0.2%-0.5%/边基本无影响)，而是【短期资本利得税】。
+//     集合策略每次翻转都会在<1年内实现利得，按普通所得税率征税(可能到37%联邦+3.8%NIIT)，
+//     而不是从不卖出所享有的0%递延。按32%的示例短期税率，Sharpe从1.71降到约1.06——
+//     仍略胜买入持有，但差距明显收窄；在最高档税率下差距会进一步缩小。
+//     在IRA等税收优惠账户中此顾虑完全不存在。
+//   • 结论：买入持有仍是应负责任的【默认】选项。本指标的集合投票是一个风险仪表盘
+//     （当前处于哪种regime、上次回撤有多深），不是交易指令 —— 除非你清楚自己的
+//     税率足够低，或者是在免税/延税账户中操作。
+//
+// 用法 / How to use:
+//   1. 挂在【日线】上。标的：BTCUSD、BTC-USD 或交易所自己的 BTC/USD 现货对。
+//   2. 看表格里的 集合投票 STATE：多头 LONG / 现金 CASH-现金。
+//   3. 填入成本价和短期税率，表格会给出"如果今天卖出"的示例税负估算。
+//   4. 每天看一次即可；正常情况下几周到几个月才会翻转一次。
+// ============================================================================
+
+indicator(title="BTC长线趋势系统 BTC Long-Term Trend System", shorttitle="BTC Trend", overlay=true,
+     format=format.price, precision=0, max_labels_count=100, max_bars_back=1000)
+
+//=============================//
+// 0) 输入 / Inputs
+//=============================//
+grp_e = "集合投票 / Ensemble vote (the actual decision)"
+bandPct   = input.float(3.0, "各长度迟滞带 Per-length hysteresis band (%)", minval=0.0, maxval=10.0, step=0.5, group=grp_e,
+     tooltip="11个SMA长度(20/25/30/40/50/65/80/100/130/160/200)各自独立应用该迟滞带，再取多头票数比例。已验证默认值：3%。")
+voteThr   = input.float(70.0, "投票阈值 Vote threshold (%)", minval=30.0, maxval=100.0, step=5.0, group=grp_e,
+     tooltip="需要多大比例的长度同意才算多头。已验证：70% 比 30%/50% 的Sharpe更高、回撤更浅、翻转更少。")
+
+grp_r = "参考线(不驱动决策) / Reference only (does not drive state)"
+refLen  = input.int(65, "参考MA长度(日) Reference MA length", minval=20, maxval=200, step=5, group=grp_r,
+     tooltip="仅供图上参考，实际状态由上方11条长度的集合投票决定，不是这一条线。")
+showRef = input.bool(true, "显示参考MA Show reference MA", group=grp_r)
+
+grp_p = "税负计算器 / Tax drag calculator (illustrative only)"
+costBasis = input.float(0.0, "成本价 Cost basis ($, 0=不计算)", minval=0.0, group=grp_p)
+stTaxPct  = input.float(32.0, "短期税率 Short-term/ordinary tax rate (%)", minval=0.0, maxval=50.0, step=1.0, group=grp_p,
+     tooltip="示例值。翻转持有<1年会按此税率征税；从不卖出的买入持有则递延为0。请填入你自己的实际税率。")
+
+grp_v = "显示 / Display"
+showBg = input.bool(true, "状态背景色 State background", group=grp_v)
+tblPos = input.string("top_right", "表格位置 Table position", options=["top_right", "top_left", "bottom_right", "bottom_left"], group=grp_v)
+
+//=============================//
+// 1) 工具函数 / Helpers
+//=============================//
+f_pct(x) => str.tostring(x, "#.#") + "%"
+f_px(x)  => str.tostring(x, "#,###")
+
+// 单个长度的迟滞状态机：价格清楚穿过带子才翻转，带内保持前值。
+// Per-length hysteresis state machine: only flips when price clears the band.
+f_vote(int len, float bandPctLocal) =>
+    ma = ta.sma(close, len)
+    band = bandPctLocal / 100.0
+    var int st = 0
+    if not na(ma)
+        if close > ma * (1.0 + band)
+            st := 1
+        else if close < ma * (1.0 - band)
+            st := 0
+    st
+
+//=============================//
+// 2) 集合投票 / Ensemble vote — 11个固定长度，与 btc_system.py ENSEMBLE_LENGTHS 一致
+//=============================//
+v1  = f_vote(20,  bandPct)
+v2  = f_vote(25,  bandPct)
+v3  = f_vote(30,  bandPct)
+v4  = f_vote(40,  bandPct)
+v5  = f_vote(50,  bandPct)
+v6  = f_vote(65,  bandPct)
+v7  = f_vote(80,  bandPct)
+v8  = f_vote(100, bandPct)
+v9  = f_vote(130, bandPct)
+v10 = f_vote(160, bandPct)
+v11 = f_vote(200, bandPct)
+voteUp  = v1 + v2 + v3 + v4 + v5 + v6 + v7 + v8 + v9 + v10 + v11
+votePct = voteUp / 11.0 * 100.0
+isLong  = votePct >= voteThr
+
+stateTxt = isLong ? "多头 LONG" : "现金/避险 CASH-RISK-OFF"
+
+//=============================//
+// 3) 回撤 / Drawdown context
+//=============================//
+athClose  = ta.highest(close, 2000)   // ~ all available history on a daily chart, capped by max_bars_back
+ddFromAth = (close / athClose - 1.0) * 100.0
+
+//=============================//
+// 4) 税负计算器 / Tax drag calculator
+//=============================//
+hasBasis   = costBasis > 0.0
+gainPct    = hasBasis ? (close / costBasis - 1.0) * 100.0 : na
+illusTax   = (hasBasis and close > costBasis) ? (close - costBasis) * (stTaxPct / 100.0) : na
+taxTxt     = na(illusTax) ? "填入成本价以估算" : "若今日卖出 ≈ $" + str.tostring(illusTax, "#,###") + " (" + f_pct(stTaxPct) + " x 利得)"
+
+//=============================//
+// 5) 绘图 / Plots
+//=============================//
+refMa = ta.sma(close, refLen)
+plot(showRef ? refMa : na, "参考MA Reference MA (" + str.tostring(refLen) + "d)",
+     color=color.new(color.gray, 30), linewidth=1)
+
+bgcolor(showBg ? (isLong ? color.new(color.teal, 94) : color.new(color.red, 94)) : na, title="集合投票状态背景")
+
+flippedUp   = isLong and not isLong[1]
+flippedDown = (not isLong) and isLong[1]
+plotshape(flippedUp,   "翻转为多头 -> LONG",         style=shape.triangleup,   location=location.belowbar, color=color.new(color.teal, 0), size=size.small)
+plotshape(flippedDown, "翻转为现金 -> CASH/RISK-OFF", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0),  size=size.small)
+
+//=============================//
+// 6) 信息表 / Info table
+//=============================//
+tPos = tblPos == "top_left" ? position.top_left : tblPos == "bottom_right" ? position.bottom_right : tblPos == "bottom_left" ? position.bottom_left : position.top_right
+var table tb = table.new(tPos, 2, 9, border_width=1, frame_width=1, frame_color=color.new(color.gray, 50))
+
+f_row(int rw, string k, string v, color vc) =>
+    table.cell(tb, 0, rw, k, text_size=size.small, text_color=color.new(color.gray, 10), text_halign=text.align_left,  bgcolor=color.new(color.gray, 92))
+    table.cell(tb, 1, rw, v, text_size=size.small, text_color=vc,                        text_halign=text.align_right, bgcolor=color.new(color.gray, 92))
+
+if barstate.islast
+    notDaily = timeframe.period != "D"
+    stCol = isLong ? color.new(color.teal, 0) : color.new(color.red, 0)
+    table.cell(tb, 0, 0, "BTC长线趋势 BTC Trend", text_size=size.small, text_color=color.white, bgcolor=color.new(color.blue, 20))
+    table.cell(tb, 1, 0, "集合 Ensemble 11", text_size=size.small, text_color=color.white, bgcolor=color.new(color.blue, 20))
+    f_row(1, "状态 STATE (>=" + f_pct(voteThr) + ")", stateTxt,                          stCol)
+    f_row(2, "投票 Vote",         str.tostring(voteUp) + "/11 = " + f_pct(votePct),        votePct >= voteThr ? color.new(color.teal, 0) : color.new(color.red, 0))
+    f_row(3, "收盘 Close",        f_px(close),                                             color.new(color.gray, 10))
+    f_row(4, "距历史高点 vs ATH", f_pct(ddFromAth),                                        ddFromAth >= -10.0 ? color.new(color.teal, 0) : color.new(color.red, 0))
+    f_row(5, "成本价/利得 Basis/Gain", hasBasis ? f_px(costBasis) + "  (" + f_pct(gainPct) + ")" : "—", color.new(color.gray, 10))
+    f_row(6, "示例税负 Illustrative tax", taxTxt,                                          color.new(color.orange, 0))
+    f_row(7, "默认 DEFAULT",      "买入持有 BUY & HOLD",                                   color.new(color.gray, 10))
+    f_row(8, "提醒 Note",         notDaily ? "⚠ 请用日线 USE DAILY TF" : "本读数是风险仪表盘，非交易指令",
+         notDaily ? color.new(color.red, 0) : color.new(color.gray, 30))
+
+//=============================//
+// 7) 警报 / Alerts
+//=============================//
+alertcondition(flippedUp,   title="BTC集合投票转多头 BTC ensemble -> LONG",         message="BTC ensemble vote flipped to LONG ({{interval}}). Reminder: buy-and-hold is the default; only act on this if you know your tax bracket makes it worthwhile, or you're in a tax-advantaged account.")
+alertcondition(flippedDown, title="BTC集合投票转现金 BTC ensemble -> CASH/RISK-OFF", message="BTC ensemble vote flipped to CASH/RISK-OFF ({{interval}}). Do NOT auto-sell — re-check the tax-drag numbers in btc_system.py before realizing a short-term gain.")
