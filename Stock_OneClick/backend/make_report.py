@@ -33,7 +33,7 @@ DEFAULT_WORKBOOK = BASE_DIR / "scan_result_latest.xlsx"
 HISTORY_DIR = BASE_DIR / "history"
 REPORTS_DIR = BASE_DIR / "reports"
 
-CTX_LABELS = ["市场环境", "日线判断", "4H提示", "轮动判断", "指数快照", "策略提示"]
+CTX_LABELS = ["市场环境", "日线判断", "4H提示", "轮动判断", "波动率", "指数快照", "策略提示"]
 STOP_MARKERS = ("Top5统计", "排名", "触发样本", "市场环境", "No signals", "信号快照")
 
 

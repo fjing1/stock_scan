@@ -161,7 +161,7 @@ plot(ma22, "RSI MA22", color=color.orange, linewidth=2)
 plot(ma85, "RSI MA85", color=color.fuchsia, linewidth=2)
 
 ma8CrossOverMa22 = ta.crossover(ma8, ma22)
-plotshape(ma8CrossOverMa22, title="MA8 x MA22 Buy", text="买", style=shape.labelup, location=location.belowbar, color=color.lime, textcolor=color.black, size=size.small)
+plotshape(ma8CrossOverMa22, title="MA8 x MA22 Buy", text="买", style=shape.labelup, location=location.top, color=color.lime, textcolor=color.black, size=size.small)
 alertcondition(ma8CrossOverMa22, title="RSI MA8 crosses over MA22 (Buy)", message="{{ticker}}: RSI MA8 crossed over MA22 on {{interval}} — buy signal.")
 
 // Divergence

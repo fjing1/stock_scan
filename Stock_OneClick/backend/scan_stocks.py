@@ -108,6 +108,22 @@ MARKET_CONTEXT_HELP_TEXT = """市场方向判断方法（写死在程序内，�
 - VIX单日大涨或站上MA20：提示恐慌上升。
 - SMH转弱而XLU强于SMH：提示资金偏防守。
 
+波动率读数（VIX / VVIX / VIX3M，只解释不打分）：
+- VIX：即期恐慌水平，配MA20与1年分位看是高是低。
+- VIX/VIX3M 期限结构：<1 contango属正常（回调多为有序）；>1 倒挂，急性压力，历史上多见于下跌末段。
+- VVIX：波动率的波动率，衡量尾部对冲需求。VIX低而VVIX高＝“脆弱的平静”，对冲便宜；
+  VIX跳升而VVIX不跟随＝抛售有序。
+- 这三项不进风险分：本仓库未对VIX/VVIX择时规则做过前瞻回测，只用于解释当日跌势的性质。
+
+VIX带位（MA10 / 布林带(10,2)，同样只解释不打分）：
+- z10=(VIX-MA10)/sd10，等价于布林带 4*%B-2；≥+2冲出上轨(5.7%的日子)，≤-2跌破下轨(1.8%)，
+  中间76.7%为带内。
+- 带宽=4*sd10/MA10，取2年分位；≤20%为"挤压"，≥80%为"张开"。
+- 已回测结论（1990-2026，9239个交易日，_vix_ma10_bb_research.py）：带位对未来5日SPX方向
+  没有可用edge，2015年后各变体超额均在±0.05pp内且不显著，约588个配置经BH q=.05校正后零发现；
+  "VIX冲出MA10上方就是抄底信号"这条流行说法在现代样本里测不出来。带宽只预测未来两周的
+  振幅大小（不是方向），且控制VIX 1年分位后不再显著——所以只用于止损宽度/手数的波动率定标。
+
 输出档位：
 强势/中性看涨：正常观察买点。
 谨慎看涨：买点可看，但仓位和追涨要收敛。
@@ -1087,6 +1103,273 @@ def build_btc_regime() -> list:
     ]
 
 
+def _vol_close_series(ticker: str, as_of_date, period: str = "2y") -> pd.Series | None:
+    """波动率指数收盘序列（截至 as_of_date）。取不到数据返回 None。
+    注意 dropna()：^VIX3M/^VVIX 会整段缺失，绝不能 reindex+ffill 补成日历序列——
+    宁可少一根，也不能把几周前的旧值当成今天的。"""
+    try:
+        df = download_daily(ticker, period=period)
+    except Exception:
+        return None
+    if df is None or df.empty or "Close" not in df:
+        return None
+    s = pd.to_numeric(df["Close"], errors="coerce").dropna()
+    s.index = pd.to_datetime(s.index).date
+    s = s[s.index <= as_of_date]
+    return s if len(s) else None
+
+
+def _vix_band_stats(s: pd.Series | None) -> dict:
+    """VIX 相对自身 MA10 / 布林带(10,2) 的位置与带宽。
+
+    只读描述层。研究结论（_vix_ma10_bb_research.py + _vix_wf_* 工作流，1990-2026 共 9,239 个交易日）：
+    带位对未来5日 SPX 没有可用的方向性 edge——2015年后 stretch>=+10% 超额 +0.05pp(n=423,p=.72)，
+    冲出上轨 -0.04pp(n=195)，跌破下轨 -0.29pp(n=39, 2026年至今0次)；整个约588配置的家族经
+    BH q=.05 校正后零发现。唯一跨四个年代同号且2015年后仍显著的是"带宽"，但它只预测未来两周
+    的波动幅度（|SPX 10日| 1.89% vs 2.28%），不预测方向，而且控制住 VIX 1年分位后就不显著了
+    （p=.35）——也就是说它是"VIX低不低"的一个更差的替身，而那个数上面已经打印了。
+    因此：不进风险分，不做买卖触发，只用来描述当下波动结构。
+
+    z10 = (VIX-MA10)/sd10，等价于 4*%B-2；ddof=0 与 _vix_data.add_features 保持一致。
+    """
+    if s is None or len(s) < 30:
+        return {"ok": False}
+    # 连续性检查：序列是 dropna 过的，^VIX 自己若有跳空，"最近10个印数"可能横跨远超10个交易日
+    span = (s.index[-1] - s.index[-10]).days
+    if span > 18:
+        return {"ok": False, "gap": span}
+
+    ma10 = float(s.rolling(10).mean().iloc[-1])
+    sd10 = float(s.rolling(10).std(ddof=0).iloc[-1])
+    if not ma10 or not np.isfinite(sd10) or sd10 <= 0:
+        return {"ok": False}
+    last = float(s.iloc[-1])
+    z10 = (last - ma10) / sd10
+    width = 4 * sd10 / ma10
+
+    w_hist = (4 * s.rolling(10).std(ddof=0) / s.rolling(10).mean()).dropna()
+    w_win = w_hist.iloc[-504:]
+    width_p = float((w_win <= width).mean()) if len(w_win) >= 250 else np.nan
+
+    if z10 >= 2.0:
+        band_state = "冲出上轨"
+    elif z10 >= 1.5:
+        band_state = "逼近上轨"
+    elif z10 > -1.5:
+        band_state = "带内"
+    elif z10 > -2.0:
+        band_state = "逼近下轨"
+    else:
+        band_state = "跌破下轨"
+
+    if pd.isna(width_p):
+        width_state = "带宽样本不足"
+    elif width_p <= 0.20:
+        width_state = "挤压"
+    elif width_p >= 0.80:
+        width_state = "张开"
+    else:
+        width_state = "常态"
+
+    return {
+        "ok": True, "ma10": ma10, "sd10": sd10, "stretch": last / ma10 - 1.0, "z10": z10,
+        "band_lo": ma10 - 2 * sd10, "band_up": ma10 + 2 * sd10,
+        "width": width, "width_p2y": width_p,
+        "band_state": band_state, "width_state": width_state,
+        "quiet": band_state == "带内" and width_state == "常态",
+    }
+
+
+def _vol_stats(s: pd.Series | None) -> dict:
+    """当前值 + 1日变化 + MA20 + 过去252日分位。数据不足的项为 NaN。
+    asof = 这个序列自己最后一根有效K线的日期——各指数的可得性并不同步，见 build_vol_context
+    里的新鲜度检查。"""
+    if s is None or len(s) == 0:
+        return {"ok": False}
+    last = float(s.iloc[-1])
+    prev = float(s.iloc[-2]) if len(s) >= 2 else np.nan
+    ma20 = float(s.rolling(20).mean().iloc[-1]) if len(s) >= 20 else np.nan
+    win = s.iloc[-252:]
+    pctile = float((win <= last).mean() * 100) if len(win) >= 60 else np.nan
+    return {
+        "ok": True,
+        "last": last,
+        "asof": s.index[-1],
+        "pct_1d": (last / prev - 1.0) if pd.notna(prev) and prev else np.nan,
+        "ma20": ma20,
+        "above_ma20": bool(pd.notna(ma20) and last > ma20),
+        "pctile": pctile,
+    }
+
+
+def _vix_level_label(v: float) -> str:
+    for hi, lab in ((13, "极度平静"), (17, "平静"), (22, "常态"), (28, "压力升高"), (40, "恐慌")):
+        if v < hi:
+            return lab
+    return "极端恐慌"
+
+
+def _vvix_level_label(v: float) -> str:
+    for hi, lab in ((85, "凸性需求低/自满"), (100, "常态"), (115, "尾部对冲升温")):
+        if v < hi:
+            return lab
+    return "高度紧张"
+
+
+def build_vol_context(as_of_date, is_partial: bool = False) -> dict:
+    """VIX / VVIX / VIX3M 波动率读数。
+
+    三个维度，各自回答不同的问题：
+      VIX          即期恐慌水平（未来30天隐含波动）。
+      VIX3M 期限结构  VIX/VIX3M。<1 = contango（正常，回调多为有序）；>1 = 倒挂/backwardation，
+                   即市场认为“现在比三个月后更危险”——急性压力，历史上多见于下跌末段而非起点。
+      VVIX         波动率的波动率，即 VIX 期权的隐含波动。衡量的是“对冲需求 / 凸性定价”：
+                   VIX 低而 VVIX 高 = 表面平静但市场在买尾部保护（脆弱的平静）；
+                   VIX 高而 VVIX 不跟随 = 恐慌已被消化，多为有序下跌。
+
+    风险仪表盘，非交易信号：本仓库没有对 VIX/VVIX 择时规则做过前瞻回测，不参与风险分打分，
+    只用来解释“今天这根跌是有序回调还是系统性恐慌”。同类只读读数见 build_btc_regime()。
+    """
+    vix_series = _vol_close_series("^VIX", as_of_date, period="3y")   # 3y：带宽分位需要504根之外的预热
+    vix = _vol_stats(vix_series)
+    vvix = _vol_stats(_vol_close_series("^VVIX", as_of_date))
+    vix3m = _vol_stats(_vol_close_series("^VIX3M", as_of_date))
+    band = _vix_band_stats(vix_series)
+    if not vix.get("ok"):
+        return {"ok": False, "note": "VIX 数据不可用", "lines": ["   VIX 数据不可用，跳过"]}
+
+    # 新鲜度检查（必须）：yfinance 的 ^VIX3M / ^VVIX 会整段缺失——实测近两年 504 个交易日里
+    # ^VIX3M 缺 39 天，且 2026-07-17→09-09 连续断了 55 天。直接取 .iloc[-1] 会把几周前的旧值
+    # 当成今天的值，算出一个凭空捏造的期限结构。落后超过 3 个交易日就判为不可用。
+    def _fresh(st, max_lag_bdays=3):
+        if not st.get("ok") or not vix.get("ok"):
+            return False
+        try:
+            lag = len(pd.bdate_range(st["asof"], vix["asof"])) - 1
+        except Exception:
+            return False
+        st["lag_bdays"] = lag
+        return lag <= max_lag_bdays
+
+    vix3m_fresh, vvix_fresh = _fresh(vix3m), _fresh(vvix)
+    stale = []
+    if vix3m.get("ok") and not vix3m_fresh:
+        stale.append(f"VIX3M停留在{pd.Timestamp(vix3m['asof']).date()}")
+    if vvix.get("ok") and not vvix_fresh:
+        stale.append(f"VVIX停留在{pd.Timestamp(vvix['asof']).date()}")
+
+    v = vix["last"]
+    term = (v / vix3m["last"]) if vix3m_fresh and vix3m["last"] else np.nan
+    backwardation = bool(pd.notna(term) and term > 1.0)
+    ratio = (vvix["last"] / v) if vvix_fresh and v else np.nan
+
+    # 判定优先级：期限结构倒挂 > 即期压力 > 脆弱的平静 > 常态
+    # 没有 VIX3M 时不能声称 contango——倒挂检测这一路直接失明，措辞必须如实说明。
+    ts_ok = pd.notna(term)
+    calm_ts = "contango未破" if ts_ok else "期限结构无数据、倒挂与否未知"
+    if backwardation:
+        regime = "急性压力（期限结构倒挂）"
+        read = ("VIX>VIX3M：市场认为当下比三个月后更危险。历史上倒挂多出现在下跌末段而非起点——"
+                "不追空，等倒挂修复（VIX回到VIX3M下方）再谈趋势买点。")
+    elif vix["above_ma20"] and v >= 22:
+        regime = "压力升高" + ("（期限结构仍正常）" if ts_ok else "（期限结构未知）")
+        read = (f"即期波动抬升，{calm_ts}：暂按有序去杠杆理解，不是系统性恐慌；买点降权而非清仓。")
+    elif vix["above_ma20"]:
+        regime = "波动抬头（低位）"
+        read = f"VIX站上MA20但绝对水平不高，{calm_ts}：属于有序回调，恐慌尚未定价。"
+    elif pd.notna(ratio) and ratio >= 6.0 and v < 20:
+        regime = "脆弱的平静"
+        read = ("即期波动低但VVIX/VIX偏高——表面平静，市场在为尾部付费。对冲便宜，"
+                "适合用保护换取继续持有，而不是靠仓位硬扛。")
+    else:
+        regime = "平静/常态"
+        read = "即期波动与凸性需求都不紧张，波动率端没有给出额外的减仓理由。"
+
+    # VIX/VVIX 同步性：只在 VIX 明显跳动的当天才有解释力
+    sync = ""
+    if pd.notna(vix.get("pct_1d")) and abs(vix["pct_1d"]) >= 0.05 and vvix_fresh and pd.notna(vvix.get("pct_1d")):
+        if vix["pct_1d"] > 0 and vvix["pct_1d"] < 0.02:
+            sync = "（VIX跳升但VVIX未跟随：抛售有序，对冲需求没有失控）"
+        elif vix["pct_1d"] > 0:
+            sync = "（VIX与VVIX同步跳升：无序抛售，尾部风险被重新定价）"
+
+    def _fmt(st, label_fn):
+        if not st.get("ok"):
+            return f"{'-':>4}"
+        parts = [f"{st['last']:.2f}", f"{_pct_text(st['pct_1d'])}"]
+        if pd.notna(st["ma20"]):
+            parts.append(f"MA20 {st['ma20']:.2f}({'上' if st['above_ma20'] else '下'})")
+        if pd.notna(st["pctile"]):
+            parts.append(f"近252有效交易日分位{st['pctile']:.0f}%")
+        parts.append(label_fn(st["last"]))
+        return " | ".join(parts)
+
+    lines = [f"   VIX:  {_fmt(vix, _vix_level_label)}"]
+    if vvix_fresh:
+        lines.append(f"   VVIX: {_fmt(vvix, _vvix_level_label)}"
+                     + (f" | VVIX/VIX {ratio:.1f}" if pd.notna(ratio) else ""))
+    if vix3m_fresh:
+        lines.append(f"   期限结构: VIX/VIX3M {term:.2f} "
+                     f"({'倒挂backwardation' if backwardation else 'contango正常'}; VIX3M {vix3m['last']:.2f})")
+    lines.append(f"   → {regime}：{read}{sync}")
+    if band.get("ok"):
+        lines.append(
+            f"   VIX带位: z10 {band['z10']:+.2f}（{band['band_state']}；BB(10,2) "
+            f"{band['band_lo']:.2f}..{band['band_up']:.2f}，MA10 {band['ma10']:.2f}，"
+            f"偏离{band['stretch']*100:+.1f}%）| 带宽2年分位"
+            + (f"{band['width_p2y']*100:.0f}%（{band['width_state']}）"
+               if pd.notna(band["width_p2y"]) else "—（样本不足）"))
+        # 77%的日子是"带内+常态"，那时候不必每天重复三行免责声明
+        if not band["quiet"]:
+            lines.append("     ↳ 只读描述，不参与风险分：VIX相对MA10/布林带的位置对未来5日SPX没有"
+                         "可用方向性edge（2015年后 stretch≥+10% 超额+0.05pp n=423 p=.72；上轨"
+                         "-0.04pp n=195；下轨-0.29pp n=39，2026年至今0次），整个家族经BH q=.05"
+                         "多重检验校正后零发现。")
+            if band["width_state"] == "挤压":
+                lines.append("     ↳ 带宽挤压只预测未来两周振幅偏小（|SPX 10日| 1.89% vs 2.28%，"
+                             "P(>4%) 9.1% vs 15.2%），不预测方向；可据此收紧止损/放大手数，"
+                             "但它被上面的VIX 1年分位吸收（控制后 p=.35）。详见 _vix_ma10_bb_research.py。")
+            elif band["width_state"] == "张开":
+                lines.append("     ↳ 带宽张开：未来两周振幅偏大（|SPX 10日| 2.69% vs 2.28%，"
+                             "P(>4%) 20.9% vs 15.2%）——止损放宽约17%、手数等比例下调以维持"
+                             "固定金额风险。仅波动率定标，不是方向判断。")
+    elif band.get("gap"):
+        lines.append(f"   VIX带位: 数据不连续（最近10个印数横跨{band['gap']}天），跳过")
+    if stale:
+        lines.append(f"   ⚠️ 数据缺口：{'；'.join(stale)} —— 已按不可用处理，"
+                     f"该项不参与判定（yfinance 的 ^VIX3M/^VVIX 会整段缺失，宁可不报也不用旧值）。")
+    if is_partial:
+        lines.append("   ⚠️ 盘中读数：VIX/VVIX 为当前值，收盘前仍会变动；分位与MA20同样基于未收盘的这根。")
+
+    note_bits = [f"{regime}", f"VIX {v:.1f}{_pct_text(vix.get('pct_1d'))}"]
+    if pd.notna(vix.get("pctile")):
+        note_bits.append(f"近252日分位{vix['pctile']:.0f}%")
+    if vvix_fresh:
+        note_bits.append(f"VVIX {vvix['last']:.0f}"
+                         + (f"(分位{vvix['pctile']:.0f}%)" if pd.notna(vvix["pctile"]) else ""))
+    if pd.notna(term):
+        note_bits.append(f"VIX/VIX3M {term:.2f}{'倒挂' if backwardation else ''}")
+    if stale:
+        note_bits.append("数据缺口:" + "/".join(s.split("停留")[0] for s in stale))
+    if band.get("ok"):
+        note_bits.append(f"带位z10 {band['z10']:+.2f}({band['band_state']})"
+                         + (f"/带宽分位{band['width_p2y']*100:.0f}%({band['width_state']})"
+                            if pd.notna(band["width_p2y"]) else ""))
+
+    return {
+        "ok": True,
+        "regime": regime,
+        "backwardation": backwardation,
+        "vix": v,
+        "vix_above_ma20": vix["above_ma20"],
+        "term_ratio": term,
+        "vvix_over_vix": ratio,
+        "band": band,
+        "note": "；".join(note_bits),
+        "lines": lines,
+    }
+
+
 def build_market_context(run_dt: datetime) -> dict:
     as_of_date = run_dt.date()
     xl = XunLongIndicator()
@@ -1191,6 +1474,12 @@ def build_market_context(run_dt: datetime) -> dict:
         if snap.get("ok"):
             parts.append(f"{sym} {_pct_text(snap.get('pct_1d'))} / 5日{_pct_text(snap.get('pct_5d'))}")
 
+    # 波动率读数：只读解释层，不进 risk 分（见 build_vol_context 的说明）。
+    try:
+        vol = build_vol_context(as_of_date)
+    except Exception as exc:
+        vol = {"ok": False, "note": f"波动率读数失败：{exc}"}
+
     return {
         "state": state,
         "risk_score": risk,
@@ -1198,6 +1487,7 @@ def build_market_context(run_dt: datetime) -> dict:
         "daily_reason": "；".join(reasons[:5]),
         "h4_note": "；".join(h4_notes[:4]),
         "rotation_note": rotation_note,
+        "vol_note": vol.get("note", ""),
         "index_snapshot": "；".join(parts),
         "suggestion": suggestion,
     }
@@ -1222,6 +1512,7 @@ def _write_market_context_block(ws, start_row: int, market_context: dict | None)
         ("日线判断", market_context.get("daily_reason", "")),
         ("4H提示", market_context.get("h4_note", "")),
         ("轮动判断", market_context.get("rotation_note", "")),
+        ("波动率", market_context.get("vol_note", "")),
         ("指数快照", market_context.get("index_snapshot", "")),
         ("策略提示", market_context.get("suggestion", "")),
     ]
@@ -3859,6 +4150,28 @@ def main():
             f"✅ 市场环境：{today_market_context.get('state')} | {today_market_context.get('daily_reason')}",
             flush=True,
         )
+    try:
+        print("✅ 波动率读数 (VIX/VVIX/VIX3M; 风险仪表盘, 不参与风险分):", flush=True)
+        vol_ctx = build_vol_context(session_date, is_partial=bool(session_state["is_partial"]))
+        for _ln in vol_ctx.get("lines", []):
+            print(_ln, flush=True)
+        # 波动率 vs 指数信号的对照：两者背离时才有增量信息
+        if vol_ctx.get("ok") and today_market_context:
+            _state = str(today_market_context.get("state", ""))
+            _risk_off = ("看跌" in _state) or ("风险" in _state)
+            if _risk_off and vol_ctx["backwardation"]:
+                print("   ↳ 对照：指数转弱 + 期限结构倒挂 —— 两端一致的急性压力，新买点全部押后。", flush=True)
+            elif _risk_off:
+                _where = "VIX已站上MA20但" if vol_ctx["vix_above_ma20"] else "VIX仍在MA20下方，"
+                _ts = ("contango未破" if pd.notna(vol_ctx.get("term_ratio"))
+                       else "期限结构今日无数据（倒挂检测失明）")
+                print(f"   ↳ 对照：指数已转弱，{_where}{_ts} —— 波动率端没有确认恐慌，"
+                      "视作有序回调：买点降权观察，不必按系统性风险清仓。", flush=True)
+            elif vol_ctx["regime"] == "脆弱的平静":
+                print("   ↳ 对照：指数无恙但波动率端在为尾部付费 —— 持有可以，追高要收敛。", flush=True)
+    except Exception as _exc:
+        print(f"⚠️ 波动率读数失败：{_exc}", flush=True)
+
     try:
         print("✅ COMBO波段regime (#24, 长线200日趋势; 与短线信号不同):", flush=True)
         for _ln in build_combo_regime():
