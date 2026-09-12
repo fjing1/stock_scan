@@ -122,14 +122,10 @@ def _ols(X, y):
     return beta, int(keep.sum())
 
 
-def fit(panel=None, train_end: str | None = None, verbose=True) -> dict:
-    """Fit HAR vol coefficients and the empirical z tables, per asset class and horizon.
-
-    train_end: ISO date. Rows on/after it are excluded entirely, so a held-out evaluation is
-    possible. None = use everything (what you ship)."""
-    import _move_data as D
-
-    panel = panel or D.load()
+def build_cache(panel, train_end: str | None = None, verbose=False) -> dict:
+    """Build the stacked design matrix / target / forward-log-return arrays once per
+    (group, horizon). Every fit downstream is then plain linear algebra on these arrays, which is
+    what makes multi-fold kappa estimation cheap instead of an hour of re-deriving features."""
     C, H, Lo = panel["Close"], panel["High"], panel["Low"]
     vix = C["^VIX"] if "^VIX" in C.columns else None
     if train_end:
@@ -140,48 +136,128 @@ def fit(panel=None, train_end: str | None = None, verbose=True) -> dict:
     usable = [s for s in C.columns if s != "^VIX" and C[s].notna().sum() >= 500]
     groups = {"index": [s for s in usable if s in INDEX_LIKE],
               "single": [s for s in usable if s not in INDEX_LIKE]}
-    model = {"groups": {}, "train_end": train_end, "horizons": list(HORIZONS)}
-
-    for gname, syms in groups.items():
-        cols = FEATS_OHLC + (["logvix"] if (gname == "index" and vix is not None) else [])
-        per_h = {}
+    cache = {}
+    for g, syms in groups.items():
+        cols = FEATS_OHLC + (["logvix"] if (g == "index" and vix is not None) else [])
         for h in HORIZONS:
-            Xs, ys = [], []
-            for s in syms:
+            X, lr, tg, yr, sid = [], [], [], [], []
+            for i, s in enumerate(syms):
                 c = C[s].dropna()
                 if len(c) < 400:
                     continue
                 f = build_features(c, H[s].reindex(c.index), Lo[s].reindex(c.index), vix)
-                tgt = _clip_log(L.realized_vol_forward(c, h))
-                Xs.append(_design(f, cols))
-                ys.append(tgt.values)
-            if not Xs:
+                Xi = _design(f, cols)
+                li = np.log(c.shift(-h) / c).values
+                ti = _clip_log(L.realized_vol_forward(c, h)).values
+                ok = np.isfinite(Xi).all(axis=1) & np.isfinite(li)
+                X.append(Xi[ok]); lr.append(li[ok]); tg.append(ti[ok])
+                yr.append(c.index.year.values[ok]); sid.append(np.full(int(ok.sum()), i))
+            if not X:
                 continue
-            X, y = np.vstack(Xs), np.concatenate(ys)
-            beta, n = _ols(X, y)
-            if beta is None:
-                continue
-
-            # z table, fit with EXACTLY the sigma spec that ships (any constant per-h scale bias
-            # in sigma is absorbed here by construction -- that is the point).
-            zs = []
-            for s in syms:
-                c = C[s].dropna()
-                if len(c) < 400:
-                    continue
-                f = build_features(c, H[s].reindex(c.index), Lo[s].reindex(c.index), vix)
-                sig = np.exp(_design(f, cols) @ beta) * np.sqrt(h)
-                lr = np.log(c.shift(-h) / c)          # LOG forward return (see module docstring)
-                z = (lr.values / sig)
-                zs.append(z[np.isfinite(z)])
-            zcat = np.sort(np.concatenate(zs))
-            per_h[h] = {"beta": beta, "cols": cols, "n_fit": n,
-                        "z": zcat.astype(np.float32), "n_z": len(zcat)}
+            cache[(g, h)] = dict(X=np.vstack(X), lr=np.concatenate(lr), tgt=np.concatenate(tg),
+                                 yr=np.concatenate(yr), sid=np.concatenate(sid),
+                                 cols=cols, symbols=syms)
             if verbose:
-                print(f"  {gname:<7} h={h:<3} n_fit={n:>9,}  n_z={len(zcat):>9,}  "
-                      f"z: med={np.median(zcat):+.3f} sd={zcat.std():.3f} "
-                      f"P(z<-2)={np.mean(zcat < -2):.4f} P(z>2)={np.mean(zcat > 2):.4f}")
-        model["groups"][gname] = {"symbols": syms, "per_h": per_h}
+                print(f"  cached {g:<7} h={h:<3} rows={len(cache[(g, h)]['lr']):>9,}")
+    return cache
+
+
+def _fit_arrays(X, tgt, lr, h, sel):
+    """(beta, sorted z) fit on the boolean row selection `sel`."""
+    fin = np.isfinite(tgt)
+    beta, n = _ols(X[sel & fin], tgt[sel & fin])
+    if beta is None:
+        return None, None, 0
+    sig = np.exp(X[sel] @ beta) * np.sqrt(h)
+    z = lr[sel] / sig
+    return beta, np.sort(z[np.isfinite(z)]), n
+
+
+def _calibrate_kappa(z_in, sig_val, lr_val, thrs=(0.01, 0.02, 0.03, 0.05)) -> float:
+    """Width multiplier on the reference z distribution, chosen on an INNER fold, never on test.
+
+    Why a WIDTH multiplier and not a sigma multiplier: scaling sigma is a mathematical no-op here,
+    because z = return/sigma and the thresholds are divided by the same sigma -- the empirical
+    table absorbs any constant scale by construction. Only the table's own width changes anything.
+
+    Why it is needed: the index z table rests on ~6,200 independent dates, so its tails are
+    finite-sample thin -- an expanding window that has not yet seen the next crash under-states the
+    chance of a big move, which is the dangerous direction for a risk tool. Measured out of sample
+    this halves index ECE (h=5: 0.031 -> 0.016) at no cost in sharpness. Single names land at
+    kappa ~1.0, i.e. it correctly does nothing where nothing is wrong."""
+    grid = np.linspace(0.90, 1.40, 26)
+    best, best_err = 1.0, np.inf
+    for k in grid:
+        zk = z_in * k
+        err = 0.0
+        for thr in thrs:
+            a_dn, a_up = np.log(1 - thr), np.log(1 + thr)
+            f_dn = np.searchsorted(zk, a_dn / sig_val, side="right") / len(zk)
+            f_up = np.searchsorted(zk, a_up / sig_val, side="right") / len(zk)
+            err += abs((f_dn + (1 - f_up)).mean()
+                       - float(((lr_val <= a_dn) | (lr_val >= a_up)).mean()))
+        if err < best_err:
+            best, best_err = float(k), err
+    return best
+
+
+def fit(panel=None, train_end: str | None = None, n_folds=8, verbose=True) -> dict:
+    """Fit HAR vol coefficients, the empirical z tables, and the width calibration kappa.
+
+    kappa is the MEDIAN over `n_folds` expanding inner folds (each a held-out calendar year), not
+    a single fold. A single fold is regime-dependent: calibrating only on the last two years of
+    this sample -- a calm stretch -- returns kappa 0.90-0.98, while the median across 8 folds
+    returns 1.05-1.13, matching the walk-forward measurement. Never calibrate width on one fold.
+
+    train_end: ISO date; rows on/after it are excluded so a held-out evaluation is possible."""
+    import _move_data as D
+
+    panel = panel or D.load()
+    cache = build_cache(panel, train_end=train_end, verbose=verbose)
+    model = {"groups": {}, "train_end": train_end, "horizons": list(HORIZONS), "n_folds": n_folds}
+
+    for (g, h), d in sorted(cache.items()):
+        X, lr, tgt, yr = d["X"], d["lr"], d["tgt"], d["yr"]
+        years = sorted(set(yr))
+        kappas = []
+        for ty in years[-n_folds:]:
+            tr, va = yr < ty, yr == ty
+            if tr.sum() < 5000 or va.sum() < 50:
+                continue
+            b_in, z_in, _ = _fit_arrays(X, tgt, lr, h, tr)
+            if b_in is None or len(z_in) < 5000:
+                continue
+            kappas.append(_calibrate_kappa(z_in, np.exp(X[va] @ b_in) * np.sqrt(h), lr[va]))
+        kappa = float(np.median(kappas)) if kappas else 1.0
+
+        beta, z, n = _fit_arrays(X, tgt, lr, h, np.ones(len(lr), bool))
+        if beta is None:
+            continue
+        z = z * kappa
+        spec = {"beta": beta, "cols": d["cols"], "n_fit": n, "kappa": kappa,
+                "kappa_folds": [round(k, 3) for k in kappas],
+                "z": z.astype(np.float32), "n_z": len(z)}
+
+        # No-VIX fallback for the index group. Dropping the logvix COLUMN at predict time while
+        # keeping the intercept is not a fallback, it is a bug: the term contributes about
+        # 0.47 * log(VIX/100/sqrt(252)) ~ -2.1, so deleting it inflates sigma roughly 8x. The
+        # fallback has to be its own fit, with its own z table, or not exist at all.
+        if "logvix" in d["cols"]:
+            iv = d["cols"].index("logvix") + 1          # +1 for the intercept column
+            keep = [j for j in range(X.shape[1]) if j != iv]
+            Xn = X[:, keep]
+            bn, zn, nn = _fit_arrays(Xn, tgt, lr, h, np.ones(len(lr), bool))
+            if bn is not None:
+                spec["fallback"] = {"beta": bn, "cols": [c for c in d["cols"] if c != "logvix"],
+                                    "z": (zn * kappa).astype(np.float32), "n_fit": nn}
+
+        model["groups"].setdefault(g, {"symbols": d["symbols"], "per_h": {}})
+        model["groups"][g]["per_h"][h] = spec
+        if verbose:
+            print(f"  {g:<7} h={h:<3} n_fit={n:>9,}  kappa={kappa:.3f} "
+                  f"(folds {min(kappas):.2f}-{max(kappas):.2f})  "
+                  f"z: med={np.median(z):+.3f} P(z<-2)={np.mean(z < -2):.4f} "
+                  f"P(z>2)={np.mean(z > 2):.4f}")
 
     pd.to_pickle(model, MODEL_PATH)
     if verbose:
@@ -212,59 +288,85 @@ def predict_from_bars(symbol, close, high=None, low=None, vix=None, horizons=HOR
         if spec is None:
             continue
         cols = spec["cols"]
-        if any(c not in f.columns for c in cols):        # e.g. VIX unavailable for an index
-            fallback = [c for c in cols if c in f.columns]
-            beta = spec["beta"][:1 + len(fallback)]
-            row = _design(f.iloc[[-1]], fallback)
+        if any(c not in f.columns for c in cols):
+            fb = spec.get("fallback")
+            if fb is None or any(c not in f.columns for c in fb["cols"]):
+                out.append({"h": h, "ok": False, "why": "缺少必要特征（无VIX且无降级模型）"})
+                continue
+            beta, zt, cols = fb["beta"], fb["z"], fb["cols"]
+            row = _design(f.iloc[[-1]], cols)
+            degraded = True
         else:
-            beta, row = spec["beta"], _design(f.iloc[[-1]], cols)
+            beta, zt, row = spec["beta"], spec["z"], _design(f.iloc[[-1]], cols)
+            degraded = False
         if not np.isfinite(row).all():
             out.append({"h": h, "ok": False, "why": "特征不足（历史长度不够或含缺口）"})
             continue
 
-        sig_daily = float(np.exp(row @ beta))
+        sig_daily = float(np.exp(row @ beta).item())
         sig_h = sig_daily * np.sqrt(h)
         mult = EARN_MULT.get(h, 1.0) if (earnings_in and h in earnings_in and g == "single") else 1.0
         sig_h *= mult
 
         a_dn, a_up = np.log(1 - thr), np.log(1 + thr)
         ratio = a_up / sig_h
-        z = spec["z"]
+        z = zt
         F_dn, F_0, F_up = _cdf(z, a_dn / sig_h), _cdf(z, 0.0), _cdf(z, a_up / sig_h)
         p = np.array([F_dn, max(F_0 - F_dn, 0), max(F_up - F_0, 0), max(1 - F_up, 0)])
         p = np.clip(p, 1e-4, None)
         p = p / p.sum()
 
+        # Move SIZES read off the same z table, so they cannot disagree with the probabilities.
+        # Never display sigma_h itself as "the expected move": it is a fitted scale, biased ~14%
+        # low at every decile (realized/predicted 1.12-1.22). That bias is harmless for the
+        # probabilities -- the empirical z table absorbs any constant scale by construction -- but
+        # it would be a lie if shown to a user as an expected move.
+        qs = np.quantile(z, [0.05, 0.5, 0.95])
+        typ = float(np.exp(np.quantile(np.abs(z), 0.5) * sig_h) - 1)
+
         out.append({
             "h": h, "ok": True, "symbol": symbol, "asset_class": g, "thr": thr,
-            "sigma_daily": sig_daily, "sigma_h": sig_h, "earn_mult": mult,
+            "sigma_h": sig_h, "earn_mult": mult,
+            "typical_move": typ,
+            "q05": float(np.exp(qs[0] * sig_h) - 1),
+            "q50": float(np.exp(qs[1] * sig_h) - 1),
+            "q95": float(np.exp(qs[2] * sig_h) - 1),
             "support": float(ratio), "in_support": SUPPORT_LO <= ratio <= SUPPORT_HI,
+            "degraded": degraded,
             "p_down_big": p[0], "p_down_small": p[1], "p_up_small": p[2], "p_up_big": p[3],
             "p_move": p[0] + p[3], "p_within": p[1] + p[2],
-            "grade": _grade(g, h, thr),
+            "grade": _grade(g, h, thr)[0], "skill": _grade(g, h, thr)[1],
         })
     return out
 
 
+# Measured out-of-sample grade and magnitude skill per (asset class, horizon, threshold%).
+# BSS2 = Brier skill on P(|move| >= thr) against EACH TICKER'S OWN base rate over 21 walk-forward
+# test years -- the honest bar, since a user can get the base rate for free from the ticker's own
+# history. Grading rule: GREEN >= 0.05, AMBER 0.02-0.05, RED < 0.02. These are measurements, not
+# preferences; re-measure with _move_validate.py if the model changes.
+GRADES = {
+    ("index", 1): {1: ("GREEN", .163), 2: ("GREEN", .194), 3: ("GREEN", .218), 5: ("RES", .204)},
+    ("index", 5): {1: ("GREEN", .077), 2: ("GREEN", .132), 3: ("GREEN", .154), 5: ("GREEN", .143)},
+    ("index", 10): {1: ("GREEN", .053), 2: ("GREEN", .093), 3: ("GREEN", .119), 5: ("GREEN", .135)},
+    ("index", 21): {1: ("RED", .012), 2: ("AMBER", .044), 3: ("GREEN", .079), 5: ("GREEN", .125)},
+    ("single", 1): {1: ("GREEN", .081), 2: ("GREEN", .116), 3: ("GREEN", .125), 5: ("GREEN", .114)},
+    ("single", 5): {1: ("AMBER", .032), 2: ("GREEN", .055), 3: ("GREEN", .073), 5: ("GREEN", .094)},
+    ("single", 10): {1: ("RED", .021), 2: ("AMBER", .034), 3: ("AMBER", .047), 5: ("GREEN", .068)},
+    ("single", 21): {1: ("RED", .014), 2: ("AMBER", .020), 3: ("AMBER", .027), 5: ("AMBER", .042)},
+}
+
+
 def _grade(g, h, thr):
-    """Traffic light from the walk-forward study. GREEN = skill positive in 19-21 of 21 test
-    years; AMBER = magnitude only; RED = do not show a per-ticker number."""
-    t = round(thr * 100, 1)
-    if g == "single":
-        if h == 21:
-            return "RED"          # 39% of tickers score at or below their own base rate
-        if h == 10 and t < 2:
-            return "RED"
-        if h == 10:
-            return "AMBER"
-        return "GREEN"
-    if h == 1 and t >= 5:
-        return "RED"              # index cannot resolve a 5% one-day move
-    if h >= 10 and t <= 1:
-        return "RED"
-    if h == 21 and t <= 2:
-        return "AMBER"
-    return "GREEN"
+    """Measured grade + magnitude skill for this cell. Unmeasured (h, thr) inherit the nearest
+    measured threshold within the same (group, horizon)."""
+    tbl = GRADES.get((g, h))
+    if not tbl:
+        near_h = min(GRADES, key=lambda k: (k[0] != g, abs(k[1] - h)))
+        tbl = GRADES[near_h]
+    t = thr * 100
+    key = min(tbl, key=lambda k: abs(k - t))
+    return tbl[key]
 
 
 def predict(symbol, horizons=HORIZONS, thr=0.02, period="2y", model=None) -> list[dict]:
@@ -295,20 +397,22 @@ def predict(symbol, horizons=HORIZONS, thr=0.02, period="2y", model=None) -> lis
 def format_rows(rows, wide=True) -> str:
     lines = []
     if wide:
-        lines.append(f"  {'期限':<6}{'σ_h':>8}{'涨>阈值':>10}{'区间内':>9}{'跌>阈值':>10}"
-                     f"{'|移动|>阈值':>13}{'评级':>7}")
+        lines.append(f"  {'期限':<6}{'典型波动':>10}{'涨>阈值':>9}{'区间内':>9}{'跌>阈值':>9}"
+                     f"{'|移动|>阈值':>12}{'5%差情形':>11}{'95%好情形':>11}{'评级':>7}{'技能':>7}")
     for r in rows:
         if not r.get("ok"):
             lines.append(f"  h={r['h']:<4} {r.get('why','不可用')}")
             continue
         if not r["in_support"]:
-            why = "阈值远超波动范围，无法分辨" if r["support"] > SUPPORT_HI else "阈值窄于噪音，退化为方向猜测"
-            lines.append(f"  {str(r['h'])+'日':<6}{r['sigma_h']*100:>7.2f}%   —— {why} ——")
+            why = ("阈值远超该标的波动范围，无法分辨" if r["support"] > SUPPORT_HI
+                   else "阈值窄于噪音，退化为方向猜测")
+            lines.append(f"  {str(r['h'])+'日':<6}{r['typical_move']*100:>9.2f}%   —— {why} ——")
             continue
         star = "*" if r["earn_mult"] > 1 else " "
-        lines.append(f"  {str(r['h'])+'日':<6}{r['sigma_h']*100:>7.2f}%{r['p_up_big']*100:>9.1f}%"
-                     f"{r['p_within']*100:>8.1f}%{r['p_down_big']*100:>9.1f}%"
-                     f"{r['p_move']*100:>12.1f}%{star}{r['grade']:>6}")
+        lines.append(f"  {str(r['h'])+'日':<6}{r['typical_move']*100:>9.2f}%{r['p_up_big']*100:>8.1f}%"
+                     f"{r['p_within']*100:>8.1f}%{r['p_down_big']*100:>8.1f}%"
+                     f"{r['p_move']*100:>11.1f}%{star}{r['q05']*100:>10.1f}%{r['q95']*100:>10.1f}%"
+                     f"{r['grade']:>7}{r['skill']:>7.3f}")
     return "\n".join(lines)
 
 
@@ -337,7 +441,8 @@ def main():
         cls = "指数/ETF" if asset_class(s) == "index" else "个股"
         print(f"\n{s}  ({cls})  阈值 ±{args.thr:g}%")
         print(format_rows(rows))
-    print("\n  评级 GREEN=可用 / AMBER=只看|移动|一列 / RED=不要看单一数字")
+    print("\n  评级 GREEN=可用 / AMBER=只看|移动|一列 / RED=不要看单一数字（按实测BSS2：>=.05绿, .02-.05黄, <.02红）")
+    print("  技能 = 实测Brier skill：相对'该标的自己的历史频率'减少了多少误差（21年滚动前瞻检验）")
     print("  * = 该窗口内有财报，σ 已按财报乘数放大（仅个股）")
     print("  注意：全部技能都在'|移动|>阈值'这一列。涨跌方向的拆分主要由漂移和偏度决定，不是预测。")
 

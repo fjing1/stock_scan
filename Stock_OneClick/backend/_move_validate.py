@@ -29,6 +29,7 @@ import move_prob as M
 
 THRS = (0.01, 0.02, 0.03, 0.05)
 MIN_TRAIN_YEARS = 5
+INNER_FOLDS = 5
 SHRINK = 40.0
 
 
@@ -98,7 +99,22 @@ def run():
                     continue
                 sig_tr = np.exp(X[tr] @ beta) * np.sqrt(h)
                 sig_te = np.exp(X[te] @ beta) * np.sqrt(h)
-                z_tr = np.sort(y[tr] / sig_tr)
+                # Production-faithful width calibration: kappa is the median over inner folds
+                # taken from INSIDE the training window. No test-year data touches it.
+                ks = []
+                for iy in [u for u in years if u < ty][-INNER_FOLDS:]:
+                    itr, iva = yr < iy, yr == iy
+                    if itr.sum() < 5000 or iva.sum() < 50:
+                        continue
+                    bi, ni = M._ols(X[itr & fin], tgt[itr & fin])
+                    if bi is None:
+                        continue
+                    zi = np.sort(y[itr] / (np.exp(X[itr] @ bi) * np.sqrt(h)))
+                    if len(zi) < 5000:
+                        continue
+                    ks.append(M._calibrate_kappa(zi, np.exp(X[iva] @ bi) * np.sqrt(h), y[iva]))
+                kappa = float(np.median(ks)) if ks else 1.0
+                z_tr = np.sort(y[tr] / sig_tr) * kappa
 
                 a_dn, a_up = np.log(1 - thr), np.log(1 + thr)
                 F = lambda v: np.searchsorted(z_tr, v, side="right") / len(z_tr)

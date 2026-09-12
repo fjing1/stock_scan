@@ -4,10 +4,12 @@ fold, then apply kappa to the real test year. Uses no test data at any point."""
 import numpy as np, pandas as pd, _move_lib as L, move_prob as M, _move_validate as V, _move_data as D
 
 def probs(y_tr, sig_tr, sig_te, thr, kappa=1.0):
-    z = np.sort(y_tr / (sig_tr * kappa))
+    # kappa WIDENS the reference z distribution relative to the evaluation point. Scaling sigma
+    # on both sides instead would cancel exactly -- the empirical table absorbs constant scale.
+    z = np.sort(y_tr / sig_tr * kappa)
     a_dn, a_up = np.log(1-thr), np.log(1+thr)
     F = lambda v: np.searchsorted(z, v, side="right")/len(z)
-    s = sig_te*kappa
+    s = sig_te
     f_dn, f0, f_up = F(a_dn/s), F(0.0), F(a_up/s)
     p = np.column_stack([f_dn, f0-f_dn, f_up-f0, 1-f_up])
     p = np.clip(p,1e-4,None); return p/p.sum(axis=1,keepdims=True)
@@ -30,7 +32,7 @@ for (g,h),d in cache.items():
         if bi is None: continue
         s_itr=np.exp(X[itr]@bi)*np.sqrt(h); s_ival=np.exp(X[ival]@bi)*np.sqrt(h)
         obs_i=np.isin(act_all[ival],[0,3]).mean()
-        grid=np.linspace(0.85,1.35,26)
+        grid=np.linspace(0.90,1.40,26)
         errs=[abs((probs(y[itr],s_itr,s_ival,thr,k)[:,[0,3]].sum(1)).mean()-obs_i) for k in grid]
         k=float(grid[int(np.argmin(errs))]); ks.append(k)
         b,_=M._ols(X[tr&fin],tgt[tr&fin])
