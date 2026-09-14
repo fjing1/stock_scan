@@ -14,3 +14,80 @@ consent.yahoo.com
 fred.stlouisfed.org
 # Alpha Vantage — market-data API (user signed up; intraday + fundamentals). Key in .env.
 www.alphavantage.co
+# --- Order-flow proxy research (free, keyless, READ-ONLY public data downloads) ---
+# FINRA Reg SHO daily short-sale volume files (signed-flow proxy).
+cdn.finra.org
+www.finra.org
+api.finra.org
+otctransparency.finra.org
+# Cboe free daily market statistics: put/call ratios, volume history.
+cdn.cboe.com
+www.cboe.com
+# Nasdaq: NasdaqTrader daily share-volume / breadth files, ITCH sample downloads,
+# and the api.nasdaq.com JSON used by nasdaq.com pages.
+www.nasdaqtrader.com
+nasdaqtrader.com
+emi.nasdaq.com
+api.nasdaq.com
+www.nasdaq.com
+# NYSE market-data / breadth pages.
+www.nyse.com
+nyse.com
+# IEX Exchange free HIST (TOPS/DEEP pcap) download index + its GCS-hosted files.
+iextrading.com
+www.iextrading.com
+hist.iextrading.com
+storage.googleapis.com
+www.googleapis.com
+# Crypto public order-flow APIs — control/methodology dev only (free, keyless).
+api.binance.com
+data.binance.vision
+api.exchange.coinbase.com
+
+# --- Survivorship-bias / delisted-universe data probe (added 2026-09) ---
+# SEC EDGAR: free, keyless, no account. Point-in-time filer roster + delisting trail.
+www.sec.gov
+sec.gov
+data.sec.gov
+efts.sec.gov
+# Internet Archive: historical snapshots of SEC company_tickers.json + exchange symbol
+# directories -> point-in-time listed roster. Also the CDX index API.
+web.archive.org
+archive.org
+# Stooq: free bulk daily OHLCV ZIPs, claimed delisted coverage.
+stooq.com
+static.stooq.com
+stooq.pl
+# Nasdaq / NYSE official symbol directories + Nasdaq Data Link (Sharadar SEP pricing).
+www.nasdaqtrader.com
+nasdaqtrader.com
+ftp.nasdaqtrader.com
+data.nasdaq.com
+www.nasdaq.com
+api.nasdaq.com
+# Free-tier daily OHLCV vendors being tested for delisted coverage.
+api.tiingo.com
+eodhd.com
+eodhistoricaldata.com
+financialmodelingprep.com
+api.polygon.io
+polygon.io
+api.twelvedata.com
+api.marketstack.com
+# GitHub: public ticker-change / delisting datasets.
+github.com
+api.github.com
+raw.githubusercontent.com
+codeload.github.com
+objects.githubusercontent.com
+www.quandl.com
+quandl.com
+www.tiingo.com
+html.duckduckgo.com
+duckduckgo.com
+stockanalysis.com
+www.stockanalysis.com
+lite.duckduckgo.com
+en.wikipedia.org
+www.sharadar.com
+sharadar.com

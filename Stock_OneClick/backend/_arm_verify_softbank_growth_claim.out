@@ -1,0 +1,100 @@
+============================================================================================
+STEP 1 - REPRODUCE THE CLAIM'S ARITHMETIC  [source A]
+============================================================================================
+Total revenue         FY26 $4,920m  FY25 $4,007m   delta +$913m  = +22.79%   (filing text: '+$913 million, or 23%')
+SoftBank affiliate    FY26 $704.4m  FY25 $145.5m  delta +$558.9m  = 61.2% of total growth
+Arm China IPLA        FY26 $790.6m  FY25 $670.4m  delta +$120.2m  = 13.2% of total growth
+  SUM                                                        +$679.1m  = 74.4% of total growth   <-- claim says 74.4%
+
+Ex-SoftBank-affiliate AND ex-Arm-China: $3,425.0m vs $3,191.1m = +7.33%   <-- claim says +7.3%
+
+VERDICT ON ARITHMETIC: every figure reproduces to the stated precision.
+
+============================================================================================
+STEP 2 - ATTACK: DOES EXCLUDING ARM CHINA SURVIVE SCRUTINY?  [source A]
+============================================================================================
+Excluding ONLY the SoftBank affiliate consulting fee:
+  $4,215.6m vs $3,861.5m = +9.17%   (NOT +7.3%; the claim's own 61.2% share implies this)
+Arm China IPLA growth FY25->FY26: +17.9%  (and it was FLAT FY24->FY25: $670.8m -> $670.4m, -0.06%)
+Cross-check vs geography: PRC revenue $749m -> $874m = +$125m (+16.7%), consistent with Arm China +$120.2m -> the Arm China delta is PRC end-demand, not a SoftBank cheque.
+
+============================================================================================
+STEP 3 - THE DECOMPOSITION THE CLAIM DOES NOT DO: ROYALTY vs LICENSE  [source A, Note 4]
+============================================================================================
+                                        FY26      FY25     delta     %chg
+External ROYALTY                       2,123     1,763      +360   +20.4%
+External LICENSE & other               1,298     1,421      -123    -8.7%
+Related-party ROYALTY (Arm China)        490       405       +85   +21.0%
+Related-party LICENSE & other          1,009       418      +591  +141.4%
+TOTAL ROYALTY                          2,613     2,168      +445   +20.5%   <-- 0% SoftBank consulting in this line
+TOTAL LICENSE & OTHER                  2,307     1,839      +468   +25.4%
+
+Royalty share of total revenue: FY26 53.1%, FY25 54.1%
+SoftBank consulting delta (+$558.9m) vs TOTAL license&other delta (+$468m): the consulting fee is 119% of the license line's growth.
+=> License & other EX-SoftBank-consulting: $1,602.6m vs $1,693.5m = -5.4%  (i.e. it SHRANK)
+
+So the damage is confined to the LICENSE line. Royalty revenue -- the line that actually
+measures Arm-based chips SHIPPING in end products -- grew +20.5% with zero SoftBank content.
+Note 4 fn(1): point-in-time license revenue $1,372m -> $1,227m (-10.6%); over-time $467m -> $1,080m (+131%).
+
+============================================================================================
+STEP 4 - RELATED-PARTY TOTAL RECONCILIATION  [source A, Note 4 + Note 20]
+============================================================================================
+Named related parties FY26: SoftBank affil $704.4 + Arm China $790.6 + Ampere $3.6 = $1498.6m  vs Note 4 related-party total $1,499m (diff $+0.4m)  <-- claim says $1,498.6m vs $1,499.0m: CONFIRMED
+Named related parties FY25: $819.4m vs Note 4 total $823m (diff $+3.6m)
+
+============================================================================================
+STEP 5 - CONCENTRATION-NOTE ARITHMETIC  [source A, Note 4 + Item 3D]
+============================================================================================
+Arm China / total   = 16.07%  -> disclosed 'largest customer 16%'
+SB affiliate / total= 14.32%  -> disclosed 'second largest 14%'
+Item 3D names Arm China explicitly as 'our largest customer individually' and says top-5
+'(including Arm China and SoftBank Group)' = 57%/56%/54% of revenue FY26/25/24. So the
+IDENTITY of #1 is DISCLOSED; the identity of the 14% customer is INFERRED (well-supported).
+Third-largest customer = 12% (~$590m) is NOT named in Note 4; Item 3D separately discloses
+Qualcomm at 9% of FY26 revenue, so the 12% customer is a DIFFERENT, unnamed customer.
+
+============================================================================================
+STEP 6 - IS THIS NEW INFORMATION? QUARTERLY DISCLOSURE PATH  [sources A,B,C,D,E]
+============================================================================================
+  FY25 Q1 (Jun-24)  $   0.0m    [B] FY25 20-F: nil until Q2
+  FY25 Q2 (Sep-24)  $  43.2m    [C] 6-K Q2FY26 comparative
+  FY25 Q3 (Dec-24)  $  51.1m    [D] 6-K Q3FY26 comparative
+  FY25 Q4 (Mar-25)  $  51.2m    [B] FY25 20-F FY total 145.5 less 9M 94.3
+  FY26 Q1 (Jun-25)  $ 126.1m    [E] 6-K Q1FY27 comparative
+  FY26 Q2 (Sep-25)  $ 177.9m    [C] 6-K Q2FY26
+  FY26 Q3 (Dec-25)  $ 200.2m    [D] 6-K Q3FY26
+  FY26 Q4 (Mar-26)  $ 200.2m    [A] FY26 total 704.4 less [D] 9M 504.2
+  FY27 Q1 (Jun-26)  $ 192.9m    [E] 6-K Q1FY27
+
+Every FY26 quarter's shareholder letter carried 'Revenue from related parties' on the FACE
+of the income statement; every 6-K interim note named 'an affiliate of SoftBank Group' and
+gave the dollar figure. => The information was public in real time, not a 20-F revelation.
+(Checked: the exhibit-99 shareholder LETTERS contain 0 occurrences of 'Consulting Agreement'
+ and 0 of 'affiliate of SoftBank' -- the item-level detail is in the 6-K notes only.)
+
+============================================================================================
+STEP 7 - FORWARD TEST: DOES THE 'CONTAMINATION' REVERSE?  [source E, 6-K FY27 Q1]
+============================================================================================
+FY27 Q1 total revenue      $1,289m vs $1,053m = +22.4%
+FY27 Q1 related-party      $388m vs $328m = +18.3%  (filing text: 'increased $60 million, or 18%')
+FY27 Q1 EXTERNAL revenue   $901m vs $725m = +24.3%
+FY27 Q1 SoftBank consulting $192.9m vs $126.1m = +53.0%  -> annualising ~$772m
+
+=> In the MOST RECENT reported quarter the sign FLIPS: external revenue grows FASTER than
+   related-party revenue. The FY26 'external only +7%' is a fiscal-year artifact of the
+   lumpy license line, not a persistent condition. And the SoftBank fee is RECURRING and
+   GROWING, not a one-off that mechanically reverses out of the growth rate.
+
+============================================================================================
+STEP 8 - CASH QUALITY OF THE SOFTBANK REVENUE  [sources A, B]
+============================================================================================
+Current contract assets from the SoftBank affiliate: $145.5m @2025-03-31 -> $645.8m @2026-03-31
+Claim's framing: $645.8m / FY26 revenue $704.4m = 91.7% 'unbilled'  -> arithmetic CORRECT
+But the balance is CUMULATIVE, not FY26-specific: cumulative revenue recognised $849.9m, contract asset $645.8m => $204.1m (24%) has converted out of contract assets.
+[B] FY25 20-F: 'As of March 31, 2025, the Company had contract assets of $145.5 million and
+    did not have any accounts receivable' -> 100% of the FY25 fee was ALSO unbilled, yet [A]
+    reports no impairment of it. No expected-credit-loss allowance against the SoftBank
+    affiliate is disclosed in [A] (contrast: Arm China ECL $12.3m FY26 / $16.0m FY25).
+[A] Item 7B: a statement of work was restructured into 'a fixed payment amount of $300
+    million, which will be paid during the fiscal year ending March 31, 2027.'

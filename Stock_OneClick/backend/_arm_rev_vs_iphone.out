@@ -1,0 +1,40 @@
+=== Arm royalty revenue vs Apple iPhone net sales, by calendar quarter
+        arm_royalty_m  aapl_iphone_m  arm_yoy  iph_yoy  arm_qoq  iph_qoq
+2022Q4            NaN          65775      NaN      NaN      NaN      NaN
+2023Q1            NaN          51334      NaN      NaN      NaN    -22.0
+2023Q2          400.0          39669      NaN      NaN      NaN    -22.7
+2023Q3          418.0          43805      NaN      NaN      4.5     10.4
+2023Q4          470.0          69702      NaN      6.0     12.4     59.1
+2024Q1          514.0          45963      NaN    -10.5      9.4    -34.1
+2024Q2          467.0          39296     16.8     -0.9     -9.1    -14.5
+2024Q3          514.0          46222     23.0      5.5     10.1     17.6
+2024Q4          580.0          69138     23.4     -0.8     12.8     49.6
+2025Q1          607.0          46841     18.1      1.9      4.7    -32.2
+2025Q2          585.0          44582     25.3     13.5     -3.6     -4.8
+2025Q3          620.0          49025     20.6      6.1      6.0     10.0
+2025Q4          737.0          85269     27.1     23.3     18.9     73.9
+2026Q1          671.0          56994     10.5     21.7     -9.0    -33.2
+2026Q2          715.0          54252     22.2     21.7      6.6     -4.8
+
+YoY growth pairs available: n=9  (2024Q2 .. 2026Q2)
+  corr(YoY royalty growth, YoY iPhone growth) = 0.062
+  corr(QoQ royalty growth, QoQ iPhone growth) = 0.713 n=12
+  corr(levels)                                = 0.546 n=13
+  corr(arm_yoy_t, iph_yoy_t--2) = +0.683  n=7
+  corr(arm_yoy_t, iph_yoy_t--1) = -0.275  n=8
+  corr(arm_yoy_t, iph_yoy_t-+0) = +0.062  n=9
+  corr(arm_yoy_t, iph_yoy_t-+1) = -0.238  n=9
+  corr(arm_yoy_t, iph_yoy_t-+2) = -0.030  n=9
+
+=== The decoupling quarters (Apple iPhone accelerating, Arm royalty not)
+        arm_royalty_m  arm_yoy  aapl_iphone_m  iph_yoy
+2025Q3          620.0     20.6          49025      6.1
+2025Q4          737.0     27.1          85269     23.3
+2026Q1          671.0     10.5          56994     21.7
+2026Q2          715.0     22.2          54252     21.7
+
+NOTE on scale: Arm's own FY2026 20-F states royalty revenue from mobile applications
+processors was ~43% of TOTAL royalty revenue in FY ended 2026-03-31. FY26 royalty
+revenue was $2,610m (6-K Ex-99.2, Q4 FYE26 letter) and total revenue $4,920m (20-F).
+=> mobile AP royalty ~= 0.43 * 2610 = $1,122m = 22.8% of Arm total revenue,
+   and Apple is one of MANY mobile AP licensees inside that 22.8%.

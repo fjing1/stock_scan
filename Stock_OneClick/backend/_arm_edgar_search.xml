@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+  <feed xmlns="http://www.w3.org/2005/Atom">
+    <author>
+      <email>webmaster@sec.gov</email>
+      <name>Webmaster</name>
+    </author>
+    <entry title="ARRAY(0x5620646d48f8)">
+      <content type="text/xml">
+        <company-info name="ARRAY(0x562064727a98)">
+          <addresses>
+            <address type="business">
+              <city>MISHAWAKA</city>
+              <phone>7655434175</phone>
+              <state>IN</state>
+              <street1>54655 HERITAGE DRIVE</street1>
+              <zip>46545</zip>
+            </address>
+            <address type="mailing">
+              <city>MISHAWAKA</city>
+              <state>IN</state>
+              <street1>54655 HERITAGE DRIVE</street1>
+              <zip>46545</zip>
+            </address>
+          </addresses>
+          <cancelled-ma-flag>N</cancelled-ma-flag>
+          <cik>0001472992</cik>
+          <fiscal-year-end>1231</fiscal-year-end>
+          <irs-number>270246480</irs-number>
+          <last-date>2009-10-07</last-date>
+          <revoke-flag>N</revoke-flag>
+          <revoked-ma-flag>N</revoked-ma-flag>
+          <state>IN</state>
+          <state-of-incorporation>IN</state-of-incorporation>
+        </company-info>
+      </content>
+      <id>urn:tag:www.sec.gov:cik=0001472992</id>
+      <link href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&amp;CIK=0001472992&amp;owner=exclude&amp;hidefilings=0" type="text/html" />
+      <summary type="html">&lt;strong&gt;CIK:&lt;/strong&gt; 0001472992, &lt;strong&gt;State:&lt;/strong&gt; IN</summary>
+      <updated>2026-09-14T18:02:28-04:00</updated>
+    </entry>
+    <entry title="ARRAY(0x5620646d43a0)">
+      <content type="text/xml">
+        <company-info name="ARRAY(0x5620646c2600)">
+          <addresses>
+            <address type="business">
+              <city>CAMBRIDGE</city>
+              <phone>44 1223 400 400</phone>
+              <state>X0</state>
+              <street1>110 FULBOURN ROAD</street1>
+              <zip>CB1 9NJ</zip>
+            </address>
+            <address type="mailing">
+              <city>CAMBRIDGE</city>
+              <state>X0</state>
+              <street1>110 FULBOURN ROAD</street1>
+              <zip>CB1 9NJ</zip>
+            </address>
+          </addresses>
+          <cancelled-ma-flag>N</cancelled-ma-flag>
+          <cik>0001973239</cik>
+          <fiscal-year-end>0331</fiscal-year-end>
+          <irs-number>000000000</irs-number>
+          <last-date>2026-09-10</last-date>
+          <revoke-flag>N</revoke-flag>
+          <revoked-ma-flag>N</revoked-ma-flag>
+          <sic>3674</sic>
+          <state>X0</state>
+          <state-of-incorporation>X0</state-of-incorporation>
+        </company-info>
+      </content>
+      <id>urn:tag:www.sec.gov:cik=0001973239</id>
+      <link href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&amp;CIK=0001973239&amp;owner=exclude&amp;hidefilings=0" type="text/html" />
+      <summary type="html">&lt;strong&gt;CIK:&lt;/strong&gt; 0001973239, &lt;strong&gt;State:&lt;/strong&gt; X0&lt;br /&gt;&lt;strong&gt;SIC:&lt;/strong&gt; SEMICONDUCTORS &amp;amp; RELATED DEVICES</summary>
+      <updated>2026-09-14T18:02:28-04:00</updated>
+    </entry>
+    <entry title="ARRAY(0x5620646d46b8)">
+      <content type="text/xml">
+        <company-info name="ARRAY(0x562064720b20)">
+          <addresses>
+            <address type="business">
+              <city>CAMBRIDGE</city>
+              <phone>44 1223 400400</phone>
+              <state>X0</state>
+              <street1>110 FULBOURN RD</street1>
+              <zip>CB1 9NJ</zip>
+            </address>
+            <address type="mailing">
+              <city>CAMBRIDGE</city>
+              <state>X0</state>
+              <street1>110 FULBOURN RD</street1>
+              <zip>CB1 9NJ</zip>
+            </address>
+          </addresses>
+          <cancelled-ma-flag>N</cancelled-ma-flag>
+          <cik>0001057997</cik>
+          <fiscal-year-end>1231</fiscal-year-end>
+          <irs-number>000000000</irs-number>
+          <last-date>2016-09-13</last-date>
+          <revoke-flag>N</revoke-flag>
+          <revoked-ma-flag>N</revoked-ma-flag>
+          <sic>3674</sic>
+          <state>X0</state>
+        </company-info>
+      </content>
+      <id>urn:tag:www.sec.gov:cik=0001057997</id>
+      <link href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&amp;CIK=0001057997&amp;owner=exclude&amp;hidefilings=0" type="text/html" />
+      <summary type="html">&lt;strong&gt;CIK:&lt;/strong&gt; 0001057997, &lt;strong&gt;State:&lt;/strong&gt; X0&lt;br /&gt;&lt;strong&gt;SIC:&lt;/strong&gt; SEMICONDUCTORS &amp;amp; RELATED DEVICES</summary>
+      <updated>2026-09-14T18:02:28-04:00</updated>
+    </entry>
+    <entry title="ARRAY(0x5620646befb0)">
+      <content type="text/xml">
+        <company-info name="ARRAY(0x5620646d4370)">
+          <addresses>
+            <address type="business">
+              <city>NEW YORK</city>
+              <phone>2124951727</phone>
+              <state>NY</state>
+              <street1>48 WALL ST</street1>
+              <street2>C/O BANK OF NEW YORK</street2>
+              <zip>10286</zip>
+            </address>
+            <address type="mailing" />
+          </addresses>
+          <cancelled-ma-flag>N</cancelled-ma-flag>
+          <cik>0001058163</cik>
+          <irs-number>000000000</irs-number>
+          <last-date>2016-09-09</last-date>
+          <revoke-flag>N</revoke-flag>
+          <revoked-ma-flag>N</revoked-ma-flag>
+          <sic>8880</sic>
+          <state>NY</state>
+        </company-info>
+      </content>
+      <id>urn:tag:www.sec.gov:cik=0001058163</id>
+      <link href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&amp;CIK=0001058163&amp;owner=exclude&amp;hidefilings=0" type="text/html" />
+      <summary type="html">&lt;strong&gt;CIK:&lt;/strong&gt; 0001058163, &lt;strong&gt;State:&lt;/strong&gt; NY&lt;br /&gt;&lt;strong&gt;SIC:&lt;/strong&gt; UNKNOWN SIC - 8880</summary>
+      <updated>2026-09-14T18:02:28-04:00</updated>
+    </entry>
+    <entry title="ARRAY(0x5620646bf7d8)">
+      <content type="text/xml">
+        <company-info name="ARRAY(0x5620646bf1a8)">
+          <addresses>
+            <address type="business">
+              <city>COLTS NECK</city>
+              <phone>7328894300</phone>
+              <state>NJ</state>
+              <street1>41 HIGHWAY 34 SOUTH</street1>
+              <street2>SUITE 209</street2>
+              <zip>07722</zip>
+            </address>
+            <address type="mailing">
+              <city>COLTS NECK</city>
+              <state>NJ</state>
+              <street1>41 HIGHWAY 34 SOUTH</street1>
+              <street2>SUITE 209</street2>
+              <zip>07722</zip>
+            </address>
+          </addresses>
+          <cancelled-ma-flag>N</cancelled-ma-flag>
+          <cik>0001333723</cik>
+          <irs-number>000000000</irs-number>
+          <last-date>2005-07-15</last-date>
+          <revoke-flag>N</revoke-flag>
+          <revoked-ma-flag>N</revoked-ma-flag>
+          <state>NJ</state>
+          <state-of-incorporation>NJ</state-of-incorporation>
+        </company-info>
+      </content>
+      <id>urn:tag:www.sec.gov:cik=0001333723</id>
+      <link href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&amp;CIK=0001333723&amp;owner=exclude&amp;hidefilings=0" type="text/html" />
+      <summary type="html">&lt;strong&gt;CIK:&lt;/strong&gt; 0001333723, &lt;strong&gt;State:&lt;/strong&gt; NJ</summary>
+      <updated>2026-09-14T18:02:28-04:00</updated>
+    </entry>
+    <id>https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&amp;company=arm holdings&amp;owner=include&amp;count=40</id>
+    <link href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&amp;company=arm holdings&amp;owner=include&amp;count=40&amp;start=0&amp;output=atom" rel="self" type="application/atom+xml" />
+    <link href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&amp;company=arm holdings&amp;owner=include&amp;count=40&amp;start=0" rel="alternate" type="text/html" />
+    <title>Company Search Feed</title>
+    <updated>2026-09-14T18:02:28-04:00</updated>
+  </feed>

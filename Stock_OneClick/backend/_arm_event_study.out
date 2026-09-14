@@ -1,0 +1,192 @@
+
+================ APPLE iPHONE EVENTS (announce / availability)  (n events = 8)
+
+--- window [-5,5]
+                          date    ARM   SMH   AAPL  ARM_exSMH  ARM_exQQQ
+event                                                                   
+iPhone15 announce   2023-09-13    NaN   NaN    NaN        NaN        NaN
+iPhone15 available  2023-09-22 -15.84 -4.23  -2.58     -11.60     -10.94
+iPhone16 announce   2024-09-09   4.90 -1.73  -5.86       6.63       4.36
+iPhone16 available  2024-09-20   4.60  5.92   2.25      -1.32       1.59
+iPhone17 announce   2025-09-09  11.24  5.83   2.59       5.41       7.59
+iPhone17 available  2025-09-19  -9.75  5.89  11.06     -15.63     -11.90
+iPhone18 announce   2026-09-09    NaN   NaN    NaN        NaN        NaN
+iPhone18 preorder   2026-09-14    NaN   NaN    NaN        NaN        NaN
+    mean ARM -0.97%  median +4.60%  mean exSMH -3.30%  median exSMH -1.32%  hit(exSMH>0) 2/5
+
+--- window [-1,20]
+                          date    ARM    SMH  AAPL  ARM_exSMH  ARM_exQQQ
+event                                                                   
+iPhone15 announce   2023-09-13    NaN    NaN   NaN        NaN        NaN
+iPhone15 available  2023-09-22  -9.53  -1.07 -1.49      -8.46      -6.80
+iPhone16 announce   2024-09-09  14.83  10.68 -0.31       4.14      10.11
+iPhone16 available  2024-09-20  10.60   8.85  6.48       1.75       5.57
+iPhone17 announce   2025-09-09  15.33  14.92  7.00       0.40      10.26
+iPhone17 available  2025-09-19   7.98  12.31  5.57      -4.33       5.50
+iPhone18 announce   2026-09-09    NaN    NaN   NaN        NaN        NaN
+iPhone18 preorder   2026-09-14    NaN    NaN   NaN        NaN        NaN
+    mean ARM +7.84%  median +10.60%  mean exSMH -1.30%  median exSMH +0.40%  hit(exSMH>0) 3/5
+
+--- window [0,1]
+                          date    ARM   SMH  AAPL  ARM_exSMH  ARM_exQQQ
+event                                                                  
+iPhone15 announce   2023-09-13    NaN   NaN   NaN        NaN        NaN
+iPhone15 available  2023-09-22   4.37  1.56  1.24       2.81       3.88
+iPhone16 announce   2024-09-09   8.47  3.23 -0.32       5.24       6.24
+iPhone16 available  2024-09-20   0.80 -0.89 -1.05       1.69       0.73
+iPhone17 announce   2025-09-09  10.78  1.45 -4.66       9.33      10.46
+iPhone17 available  2025-09-19  -1.41  1.64  7.65      -3.05      -2.68
+iPhone18 announce   2026-09-09  -2.81 -2.34  3.27      -0.47      -1.46
+iPhone18 preorder   2026-09-14    NaN   NaN   NaN        NaN        NaN
+    mean ARM +3.37%  median +2.59%  mean exSMH +2.59%  median exSMH +2.25%  hit(exSMH>0) 4/6
+
+--- window [1,5]
+                          date    ARM   SMH  AAPL  ARM_exSMH  ARM_exQQQ
+event                                                                  
+iPhone15 announce   2023-09-13    NaN -4.61  0.73        NaN        NaN
+iPhone15 available  2023-09-22   4.29  2.13 -2.05       2.16       4.19
+iPhone16 announce   2024-09-09  10.24  6.34 -2.08       3.90       6.11
+iPhone16 available  2024-09-20   4.81  4.14 -0.18       0.67       3.77
+iPhone17 announce   2025-09-09   9.27  3.16  1.62       6.11       7.43
+iPhone17 available  2025-09-19  -2.30  1.94  4.06      -4.24      -1.85
+iPhone18 announce   2026-09-09    NaN   NaN   NaN        NaN        NaN
+iPhone18 preorder   2026-09-14    NaN   NaN   NaN        NaN        NaN
+    mean ARM +5.26%  median +4.81%  mean exSMH +1.72%  median exSMH +2.16%  hit(exSMH>0) 4/5
+
+--- window [1,21]
+                          date    ARM    SMH   AAPL  ARM_exSMH  ARM_exQQQ
+event                                                                    
+iPhone15 announce   2023-09-13    NaN   1.08   3.73        NaN        NaN
+iPhone15 available  2023-09-22  -2.16   0.45  -1.02      -2.61      -1.54
+iPhone16 announce   2024-09-09  14.39  14.85   2.20      -0.47       6.57
+iPhone16 available  2024-09-20   9.68   6.28   3.63       3.40       6.85
+iPhone17 announce   2025-09-09  18.44  16.20  10.12       2.24      12.99
+iPhone17 available  2025-09-19  20.01   9.98   6.82      10.02      17.85
+iPhone18 announce   2026-09-09    NaN    NaN    NaN        NaN        NaN
+iPhone18 preorder   2026-09-14    NaN    NaN    NaN        NaN        NaN
+    mean ARM +12.07%  median +14.39%  mean exSMH +2.52%  median exSMH +2.24%  hit(exSMH>0) 3/5
+
+================ AAPL EARNINGS REACTION DATES (8-K filing date + 1 session)  (n events = 12)
+
+--- window [-5,5]
+                          date    ARM    SMH   AAPL  ARM_exSMH  ARM_exQQQ
+event                                                                    
+AAPL ER 2023-11-03  2023-11-03   4.19  14.42  11.84     -10.23      -5.92
+AAPL ER 2024-02-02  2024-02-02  55.88   5.97  -2.62      49.91      53.37
+AAPL ER 2024-05-03  2024-05-03  11.14   5.23   7.89       5.91       6.99
+AAPL ER 2024-08-02  2024-08-02 -21.55  -4.95  -0.57     -16.60     -19.84
+AAPL ER 2024-11-01  2024-11-01   4.57   3.71  -1.46       0.85       0.13
+AAPL ER 2025-01-31  2025-01-31  -2.43  -8.19   1.78       5.76      -0.61
+AAPL ER 2025-05-02  2025-05-02   3.38   6.91  -4.72      -3.52      -1.03
+AAPL ER 2025-08-01  2025-08-01 -13.43   1.99   7.29     -15.42     -15.12
+AAPL ER 2025-10-31  2025-10-31  -8.54   0.96   3.42      -9.50      -8.40
+AAPL ER 2026-01-30  2026-01-30   3.78  -0.29  11.99       4.07       5.56
+AAPL ER 2026-05-01  2026-05-01   4.23  17.58   7.27     -13.34      -4.95
+AAPL ER 2026-07-31  2026-07-31  -0.17   0.44  -2.59      -0.60      -4.66
+    mean ARM +3.42%  median +3.58%  mean exSMH -0.23%  median exSMH -2.06%  hit(exSMH>0) 5/12
+
+--- window [-1,20]
+                          date     ARM    SMH   AAPL  ARM_exSMH  ARM_exQQQ
+event                                                                     
+AAPL ER 2023-11-03  2023-11-03   22.59  11.49   9.03      11.09      14.36
+AAPL ER 2024-02-02  2024-02-02   95.29  20.56  -4.92      74.73      88.80
+AAPL ER 2024-05-03  2024-05-03   33.40  17.14  14.76      16.26      25.90
+AAPL ER 2024-08-02  2024-08-02   -7.83  -1.43   3.24      -6.40      -8.93
+AAPL ER 2024-11-01  2024-11-01   -9.11  -1.12   4.24      -7.99     -12.92
+AAPL ER 2025-01-31  2025-01-31  -17.95  -6.90  -0.45     -11.06     -13.39
+AAPL ER 2025-05-02  2025-05-02   10.53  15.16  -4.96      -4.63       0.49
+AAPL ER 2025-08-01  2025-08-01  -15.32  -2.02  11.17     -13.30     -15.74
+AAPL ER 2025-10-31  2025-10-31  -20.76  -4.25   5.07     -16.52     -17.84
+AAPL ER 2026-01-30  2026-01-30   13.10  -2.46   3.33      15.56      17.07
+AAPL ER 2026-05-01  2026-05-01  102.71  21.66  13.48      81.05      90.44
+AAPL ER 2026-07-31  2026-07-31    6.30   9.70  -5.39      -3.40      -1.97
+    mean ARM +17.75%  median +8.41%  mean exSMH +11.28%  median exSMH -4.01%  hit(exSMH>0) 5/12
+
+--- window [0,1]
+                          date   ARM   SMH  AAPL  ARM_exSMH  ARM_exQQQ
+event                                                                 
+AAPL ER 2023-11-03  2023-11-03  0.53  2.64  0.93      -2.11      -1.06
+AAPL ER 2024-02-02  2024-02-02  3.90  3.93  0.44      -0.03       2.34
+AAPL ER 2024-05-03  2024-05-03  9.16  5.02  5.02       4.15       6.04
+AAPL ER 2024-08-02  2024-08-02 -9.10 -7.66 -4.16      -1.44      -3.82
+AAPL ER 2024-11-01  2024-11-01 -2.67  1.07 -1.73      -3.74      -3.11
+AAPL ER 2025-01-31  2025-01-31  1.58 -2.61 -4.03       4.19       2.52
+AAPL ER 2025-05-02  2025-05-02  5.68  2.50 -6.76       3.17       4.79
+AAPL ER 2025-08-01  2025-08-01 -0.94  0.49 -2.03      -1.43      -0.78
+AAPL ER 2025-10-31  2025-10-31  1.95  0.65 -0.87       1.30       0.99
+AAPL ER 2026-01-30  2026-01-30 -1.38 -2.29  4.54       0.90      -0.86
+AAPL ER 2026-05-01  2026-05-01 -3.36  0.01  2.02      -3.37      -4.13
+AAPL ER 2026-07-31  2026-07-31 -1.03  1.22 -9.00      -2.24      -3.44
+    mean ARM +0.36%  median -0.20%  mean exSMH -0.05%  median exSMH -0.73%  hit(exSMH>0) 5/12
+
+--- window [1,5]
+                          date    ARM    SMH   AAPL  ARM_exSMH  ARM_exQQQ
+event                                                                    
+AAPL ER 2023-11-03  2023-11-03  -2.28   5.20   5.66      -7.48      -5.19
+AAPL ER 2024-02-02  2024-02-02  62.27   6.60   1.74      55.66      60.39
+AAPL ER 2024-05-03  2024-05-03   7.02   2.56  -0.04       4.46       5.51
+AAPL ER 2024-08-02  2024-08-02   3.13   2.94  -1.65       0.19       2.76
+AAPL ER 2024-11-01  2024-11-01   4.24   5.96   1.93      -1.72      -1.24
+AAPL ER 2025-01-31  2025-01-31   1.86   0.57  -3.55       1.29       1.73
+AAPL ER 2025-05-02  2025-05-02  -6.06   2.00  -3.32      -8.06      -5.88
+AAPL ER 2025-08-01  2025-08-01   0.67   3.37  13.33      -2.71      -3.06
+AAPL ER 2025-10-31  2025-10-31 -10.27  -4.10  -0.70      -6.17      -7.20
+AAPL ER 2026-01-30  2026-01-30  17.41  -0.45   7.18      17.86      19.37
+AAPL ER 2026-05-01  2026-05-01   0.99  11.13   4.70     -10.14      -4.51
+AAPL ER 2026-07-31  2026-07-31  17.89   7.80   1.43      10.09      12.80
+    mean ARM +8.07%  median +2.49%  mean exSMH +4.44%  median exSMH -0.77%  hit(exSMH>0) 6/12
+
+--- window [1,21]
+                          date    ARM    SMH   AAPL  ARM_exSMH  ARM_exQQQ
+event                                                                    
+AAPL ER 2023-11-03  2023-11-03  18.88   6.20   9.64      12.68      13.56
+AAPL ER 2024-02-02  2024-02-02  88.83  15.40  -8.35      73.44      87.19
+AAPL ER 2024-05-03  2024-05-03  23.76  11.42   6.13      12.33      19.42
+AAPL ER 2024-08-02  2024-08-02   9.07   3.09   1.44       5.98       6.16
+AAPL ER 2024-11-01  2024-11-01  -0.78   1.50   8.98      -2.28      -6.82
+AAPL ER 2025-01-31  2025-01-31 -23.23  -7.55   0.08     -15.68     -18.11
+AAPL ER 2025-05-02  2025-05-02   4.47  13.59  -0.88      -9.12      -3.40
+AAPL ER 2025-08-01  2025-08-01  -3.81   0.89  13.64      -4.70      -5.93
+AAPL ER 2025-10-31  2025-10-31 -19.63  -0.99   5.95     -18.64     -18.51
+AAPL ER 2026-01-30  2026-01-30  15.53  -3.07   1.74      18.60      18.79
+AAPL ER 2026-05-01  2026-05-01  90.70  24.01  12.62      66.69      80.01
+AAPL ER 2026-07-31  2026-07-31   0.93   2.98   2.66      -2.05      -3.26
+    mean ARM +17.06%  median +6.77%  mean exSMH +11.44%  median exSMH +1.96%  hit(exSMH>0) 6/12
+
+
+================ FACTOR REGRESSIONS on ARM daily returns (since IPO)
+n obs 751 2023-09-15 -> 2026-09-14
+  AAPL                       R2=0.074 adjR2=0.073  alpha=+0.209%/d  AAPL: b=+0.779 (t=+7.8)
+  NVDA                       R2=0.242 adjR2=0.241  alpha=+0.088%/d  NVDA: b=+0.804 (t=+15.5)
+  SMH                        R2=0.419 adjR2=0.418  alpha=+0.022%/d  SMH: b=+1.340 (t=+23.2)
+  QQQ                        R2=0.365 adjR2=0.364  alpha=+0.074%/d  QQQ: b=+2.265 (t=+20.7)
+  AAPL+NVDA                  R2=0.259 adjR2=0.257  alpha=+0.066%/d  AAPL: b=+0.387 (t=+4.1)  NVDA: b=+0.737 (t=+13.7)
+  AAPL+SMH                   R2=0.421 adjR2=0.419  alpha=+0.016%/d  AAPL: b=+0.120 (t=+1.4)  SMH: b=+1.309 (t=+21.1)
+  AAPL+NVDA+QQQ              R2=0.373 adjR2=0.371  alpha=+0.069%/d  AAPL: b=-0.216 (t=-2.1)  NVDA: b=+0.134 (t=+1.9)  QQQ: b=+2.193 (t=+11.7)
+  AAPL+SMH+QQQ               R2=0.422 adjR2=0.419  alpha=+0.020%/d  AAPL: b=+0.053 (t=+0.5)  SMH: b=+1.157 (t=+8.1)  QQQ: b=+0.341 (t=+1.2)
+  AAPL+NVDA+SMH+QQQ          R2=0.423 adjR2=0.420  alpha=+0.026%/d  AAPL: b=+0.048 (t=+0.5)  NVDA: b=-0.113 (t=-1.5)  SMH: b=+1.252 (t=+8.1)  QQQ: b=+0.382 (t=+1.3)
+
+--- pairwise correlations of daily returns (since IPO)
+Ticker    ARM   AAPL   NVDA    SMH    QQQ   AVGO   QCOM    TSM
+Ticker                                                        
+ARM     1.000  0.272  0.492  0.647  0.604  0.489  0.517  0.575
+AAPL    0.272  1.000  0.304  0.365  0.552  0.293  0.366  0.298
+NVDA    0.492  0.304  1.000  0.796  0.741  0.616  0.427  0.675
+SMH     0.647  0.365  0.796  1.000  0.900  0.756  0.681  0.836
+QQQ     0.604  0.552  0.741  0.900  1.000  0.713  0.648  0.730
+AVGO    0.489  0.293  0.616  0.756  0.713  1.000  0.479  0.662
+QCOM    0.517  0.366  0.427  0.681  0.648  0.479  1.000  0.473
+TSM     0.575  0.298  0.675  0.836  0.730  0.662  0.473  1.000
+
+--- univariate beta / corr by calendar year
+  2023 (n=74): AAPL beta= 1.07 corr= 0.32   NVDA beta= 0.57 corr= 0.35   SMH beta= 1.16 corr= 0.51   QQQ beta= 1.76 corr= 0.52   
+  2024 (n=252): AAPL beta= 1.08 corr= 0.28   NVDA beta= 0.76 corr= 0.45   SMH beta= 1.43 corr= 0.57   QQQ beta= 2.56 corr= 0.52   
+  2025 (n=250): AAPL beta= 0.84 corr= 0.44   NVDA beta= 0.84 corr= 0.68   SMH beta= 1.26 corr= 0.78   QQQ beta= 1.95 corr= 0.74   
+  2026 (n=175): AAPL beta= 0.31 corr= 0.10   NVDA beta= 0.93 corr= 0.42   SMH beta= 1.36 corr= 0.68   QQQ beta= 2.65 corr= 0.64   
+
+--- last 63 sessions (the -37% window) univariate
+  window 2026-06-15 -> 2026-09-14
+   AAPL: beta=-0.12 corr=-0.05 R2=0.002
+   NVDA: beta=+0.85 corr=+0.42 R2=0.179
+   SMH: beta=+1.33 corr=+0.78 R2=0.607
+   QQQ: beta=+2.67 corr=+0.73 R2=0.540

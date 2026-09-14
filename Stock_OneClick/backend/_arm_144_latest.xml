@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?><edgarSubmission xmlns="http://www.sec.gov/edgar/ownership" xmlns:com="http://www.sec.gov/edgar/common">
+  <headerData>
+    <submissionType>144</submissionType>
+    <filerInfo>
+      <filer>
+        <filerCredentials>
+          <cik>0001533913</cik>
+          <ccc>XXXXXXXX</ccc>
+        </filerCredentials>
+      </filer>
+      <liveTestFlag>LIVE</liveTestFlag>
+
+
+
+    </filerInfo>
+  </headerData>
+  <formData>
+    <issuerInfo>
+      <issuerCik>0001973239</issuerCik>
+      <issuerName>ARM HOLDINGS PLC /UK</issuerName>
+      <secFileNumber>001-41800</secFileNumber>
+      <issuerAddress>
+        <com:street1>110 FULBOURN ROAD</com:street1>
+        <com:city>CAMBRIDGE</com:city>
+        <com:stateOrCountry>X0</com:stateOrCountry>
+        <com:zipCode>CB1 9NJ</com:zipCode>
+      </issuerAddress>
+      <issuerContactPhone>44 1223 400 400</issuerContactPhone>
+      <nameOfPersonForWhoseAccountTheSecuritiesAreToBeSold>Child Jason</nameOfPersonForWhoseAccountTheSecuritiesAreToBeSold>
+      <relationshipsToIssuer>
+        <relationshipToIssuer>Officer</relationshipToIssuer>
+      </relationshipsToIssuer>
+    </issuerInfo>
+    <securitiesInformation>
+      <securitiesClassTitle>American Depositary Shares</securitiesClassTitle>
+      <brokerOrMarketmakerDetails>
+        <name>Fidelity Brokerage Services LLC</name>
+        <address>
+          <com:street1>900 Salem Street</com:street1>
+          <com:city>Smithfield</com:city>
+          <com:stateOrCountry>RI</com:stateOrCountry>
+          <com:zipCode>02917</com:zipCode>
+        </address>
+      </brokerOrMarketmakerDetails>
+      <noOfUnitsSold>10400</noOfUnitsSold>
+      <aggregateMarketValue>2655432.00</aggregateMarketValue>
+      <noOfUnitsOutstanding>1064055252</noOfUnitsOutstanding>
+      <approxSaleDate>08/27/2026</approxSaleDate>
+      <securitiesExchangeName>NASDAQ</securitiesExchangeName>
+    </securitiesInformation>
+    <securitiesToBeSold>
+      <securitiesClassTitle>American Depositary Shares</securitiesClassTitle>
+      <acquiredDate>02/15/2024</acquiredDate>
+      <natureOfAcquisitionTransaction>Restricted Stock Vesting</natureOfAcquisitionTransaction>
+      <nameOfPersonfromWhomAcquired>Issuer</nameOfPersonfromWhomAcquired>
+      <isGiftTransaction>N</isGiftTransaction>
+      <amountOfSecuritiesAcquired>4610</amountOfSecuritiesAcquired>
+      <paymentDate>02/15/2024</paymentDate>
+      <natureOfPayment>Compensation</natureOfPayment>
+    </securitiesToBeSold>
+    <securitiesToBeSold>
+      <securitiesClassTitle>American Depositary Shares</securitiesClassTitle>
+      <acquiredDate>05/15/2024</acquiredDate>
+      <natureOfAcquisitionTransaction>Restricted Stock Vesting</natureOfAcquisitionTransaction>
+      <nameOfPersonfromWhomAcquired>Issuer</nameOfPersonfromWhomAcquired>
+      <isGiftTransaction>N</isGiftTransaction>
+      <amountOfSecuritiesAcquired>5790</amountOfSecuritiesAcquired>
+      <paymentDate>05/15/2024</paymentDate>
+      <natureOfPayment>Compensation</natureOfPayment>
+    </securitiesToBeSold>
+    <nothingToReportFlagOnSecuritiesSoldInPast3Months>Y</nothingToReportFlagOnSecuritiesSoldInPast3Months>
+    <noticeSignature>
+      <noticeDate>08/27/2026</noticeDate>
+      <planAdoptionDates>
+        <planAdoptionDate>05/22/2026</planAdoptionDate>
+      </planAdoptionDates>
+      <signature>/s/ Margaret Campbell, as a duly authorized representative of Fidelity Brokerage Services LLC, as attorney-in-fact for Jason E. Child</signature>
+    </noticeSignature>
+  </formData>
+</edgarSubmission>

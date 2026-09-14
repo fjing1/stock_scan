@@ -33,7 +33,7 @@ import pandas as pd
 import yfinance as yf
 
 PANEL = Path(__file__).with_name("_move_panel.pkl")
-FIELDS = ("Open", "High", "Low", "Close")
+FIELDS = ("Open", "High", "Low", "Close", "Volume")
 INDICES = ["SPY", "QQQ", "IWM", "DIA", "^GSPC", "^VIX"]
 N_PER_SECTOR = 30          # deterministic stride sample per sector bucket
 PERIOD = "25y"
@@ -95,7 +95,7 @@ def build() -> dict:
     # measured -1.82, i.e. a "-182% move" -- which then lands in the down_big bucket and poisons
     # both the climatology and the left tail. Blank them at the source instead.
     bad = 0
-    for f in FIELDS:
+    for f in [x for x in FIELDS if x != "Volume"]:      # volume of 0 is legitimate (halts)
         if f in panel:
             mask = panel[f] <= 0
             bad += int(mask.sum().sum())

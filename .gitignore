@@ -61,3 +61,32 @@ tradingview_scripts/industry_map.json.tmp
 .env
 *.env
 
+
+# Factor-research feature caches for the MOVE study (2.4GB total; regenerable from
+# _move_panel.pkl by re-running the matching _move_fx_*.py). The small result files
+# (_move_fx_*.csv/.log/.json and the sub-MB result pickles) ARE tracked.
+Stock_OneClick/backend/_move_fx_*_cache.pkl
+Stock_OneClick/backend/_move_fx_form_base.pkl
+Stock_OneClick/backend/_move_fx_form_R_*.pkl
+
+# SEC XBRL raw companyfacts cache (~3.8MB/symbol; regenerable via _fund_data.py).
+# The extracted panel _fund_panel.pkl IS tracked -- it is small and it is the research artifact.
+Stock_OneClick/backend/_fund_cache/
+
+# ARM fundamental research: raw SEC filings pulled as evidence (148MB; 170 .htm + 99 .txt).
+# Every analysis cites its accession number, so these are re-downloadable from EDGAR on demand.
+# The _arm_*.py scripts and the small result files ARE tracked.
+Stock_OneClick/backend/_arm_*.htm
+Stock_OneClick/backend/_arm_*.html
+Stock_OneClick/backend/_arm_*.txt
+
+# Free-data-source probe payloads (925MB, dominated by two HuggingFace option-IV CSVs at
+# 523MB + 372MB). Regenerable by the matching _data_probe_*.py in seconds-to-minutes.
+Stock_OneClick/backend/_data_probe_hf_*.csv
+Stock_OneClick/backend/_data_probe_*.pkl
+
+# Fundamental XBRL panel: regenerable from SEC in minutes (or instantly from _fund_cache/).
+# ~1.6MB per 8 symbols, so it would reach ~60MB at full watchlist coverage.
+# The LEDGER (_fund_forward.jsonl) IS tracked -- it records point-in-time conviction and is the
+# one artifact here that genuinely cannot be rebuilt after the fact.
+Stock_OneClick/backend/_fund_panel.pkl

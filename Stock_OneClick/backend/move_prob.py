@@ -86,27 +86,69 @@ def _clip_log(x):
     return np.log(np.clip(x, *VOL_CLIP))
 
 
-def build_features(close, high=None, low=None, vix=None) -> pd.DataFrame:
-    """The HAR feature block, all computable from bars up to and including t.
+def build_features(close, high=None, low=None, vix=None, volume=None) -> pd.DataFrame:
+    """The feature block, all computable from bars up to and including t.
 
     Clipping into [1e-3, 0.5] BEFORE taking logs is not cosmetic: ~0.5% of one-bar Parkinson
     values are exactly zero (high == low on halted/illiquid bars) and with a 1e-5 floor those
-    become ln = -11.5 outliers that cost 0.03-0.04 R-squared."""
+    become ln = -11.5 outliers that cost 0.03-0.04 R-squared.
+
+    Three groups of features, each earned its place by measurement (see _move_fx_screen.py and
+    _move_fx_verify_lev.py for the walk-forward deltas):
+      HAR   rv_d/rv_w/rv_m/rv_q/ewma97 -- the original scale features.
+      LEV   realized semivariance split up/down plus the signed 5-day return. The HAR block is
+            SIGN-BLIND (an intraday range and a squared return do not know which way price went),
+            so it cannot express the leverage effect. Adding LEV is worth +0.005 BSS2 at index
+            h=5 (CI [+0.0017,+0.0077], permutation control -0.0001) and +0.001..+0.002 on single
+            names, and it IMPROVES ECE at the same time. Survives dropping 2008/09/20 and
+            non-overlapping scoring.
+      VOL   dollar volume, volume surprise, Amihud illiquidity. SINGLE NAMES ONLY: worth +0.0022
+            at h=1 (CI [+0.0016,+0.0029], 21/21 years) for stocks, but reliably NEGATIVE for
+            indices (bootstrap P(delta>0) = 0.00), because index volume is dominated by
+            mechanical ETF creation/redemption rather than information arrival.
+    Measured and REJECTED, do not re-add: an overnight/intraday variance split and the
+    close-to-close / Parkinson ratio (reliably negative), bipower-variation jump separation
+    (+0.0002, noise), and the VIX term structure / VVIX (CI spans zero, ECE worse, and
+    ^VIX9D/^VIX3M stop at 2026-07-17 in yfinance so they are not live-available anyway)."""
     has_ohlc = high is not None and low is not None
     rv1 = L.vol_parkinson(high, low, 1) if has_ohlc else L._logret(close).abs()
+    r = L._logret(close)
     f = pd.DataFrame(index=close.index)
     f["rv_d"] = _clip_log(rv1)
     f["rv_w"] = _clip_log(rv1.rolling(5).mean())
     f["rv_m"] = _clip_log(rv1.rolling(22).mean())
     f["rv_q"] = _clip_log(rv1.rolling(63).mean())
     f["ewma97"] = _clip_log(L.vol_ewma(close, 0.97))
+    # LEV
+    f["sv_dn"] = _clip_log(np.sqrt((r.where(r < 0, 0.0) ** 2).rolling(22).mean()))
+    f["sv_up"] = _clip_log(np.sqrt((r.where(r > 0, 0.0) ** 2).rolling(22).mean()))
+    f["r5"] = r.rolling(5).sum()
     if vix is not None:
         f["logvix"] = np.log(np.clip(vix.reindex(close.index).ffill(limit=3) / 100 / np.sqrt(252),
                                      *VOL_CLIP))
+    if volume is not None:
+        v = pd.to_numeric(volume, errors="coerce").reindex(close.index)
+        dv = (v * close).replace(0, np.nan)
+        f["dvol"] = np.log(dv.rolling(22).mean().clip(lower=1e3))
+        f["vsurp"] = np.log((v / v.rolling(22).mean()).clip(0.05, 20))
+        f["amihud"] = np.log((r.abs() / dv).rolling(22).mean().clip(1e-14, 1e-3))
     return f
 
 
-FEATS_OHLC = ["rv_d", "rv_w", "rv_m", "rv_q", "ewma97"]
+FEATS_HAR = ["rv_d", "rv_w", "rv_m", "rv_q", "ewma97"]
+FEATS_LEV = ["sv_dn", "sv_up", "r5"]
+FEATS_VOL = ["dvol", "vsurp", "amihud"]
+FEATS_OHLC = FEATS_HAR + FEATS_LEV          # kept as the name other modules import
+
+
+def feature_cols(group: str, has_vix: bool, has_volume: bool) -> list[str]:
+    """Which columns this group actually uses. Volume is single-name only, by measurement."""
+    cols = FEATS_HAR + FEATS_LEV
+    if group == "index" and has_vix:
+        cols = cols + ["logvix"]
+    if group == "single" and has_volume:
+        cols = cols + FEATS_VOL
+    return cols
 
 
 def _design(f: pd.DataFrame, cols) -> np.ndarray:
@@ -127,10 +169,12 @@ def build_cache(panel, train_end: str | None = None, verbose=False) -> dict:
     (group, horizon). Every fit downstream is then plain linear algebra on these arrays, which is
     what makes multi-fold kappa estimation cheap instead of an hour of re-deriving features."""
     C, H, Lo = panel["Close"], panel["High"], panel["Low"]
+    Vol = panel.get("Volume")
     vix = C["^VIX"] if "^VIX" in C.columns else None
     if train_end:
         cut = pd.Timestamp(train_end)
         C, H, Lo = C[C.index < cut], H[H.index < cut], Lo[Lo.index < cut]
+        Vol = Vol[Vol.index < cut] if Vol is not None else None
         vix = vix[vix.index < cut] if vix is not None else None
 
     usable = [s for s in C.columns if s != "^VIX" and C[s].notna().sum() >= 500]
@@ -138,14 +182,17 @@ def build_cache(panel, train_end: str | None = None, verbose=False) -> dict:
               "single": [s for s in usable if s not in INDEX_LIKE]}
     cache = {}
     for g, syms in groups.items():
-        cols = FEATS_OHLC + (["logvix"] if (g == "index" and vix is not None) else [])
+        cols = feature_cols(g, vix is not None, Vol is not None)
         for h in HORIZONS:
             X, lr, tg, yr, sid = [], [], [], [], []
             for i, s in enumerate(syms):
                 c = C[s].dropna()
                 if len(c) < 400:
                     continue
-                f = build_features(c, H[s].reindex(c.index), Lo[s].reindex(c.index), vix)
+                vser = Vol[s].reindex(c.index) if (Vol is not None and s in Vol.columns) else None
+                f = build_features(c, H[s].reindex(c.index), Lo[s].reindex(c.index), vix, vser)
+                if any(x not in f.columns for x in cols):
+                    continue
                 Xi = _design(f, cols)
                 li = np.log(c.shift(-h) / c).values
                 ti = _clip_log(L.realized_vol_forward(c, h)).values
@@ -242,13 +289,13 @@ def fit(panel=None, train_end: str | None = None, n_folds=8, verbose=True) -> di
         # keeping the intercept is not a fallback, it is a bug: the term contributes about
         # 0.47 * log(VIX/100/sqrt(252)) ~ -2.1, so deleting it inflates sigma roughly 8x. The
         # fallback has to be its own fit, with its own z table, or not exist at all.
-        if "logvix" in d["cols"]:
-            iv = d["cols"].index("logvix") + 1          # +1 for the intercept column
-            keep = [j for j in range(X.shape[1]) if j != iv]
-            Xn = X[:, keep]
-            bn, zn, nn = _fit_arrays(Xn, tgt, lr, h, np.ones(len(lr), bool))
+        opt = [c for c in d["cols"] if c in (["logvix"] + FEATS_VOL)]
+        if opt:
+            drop = {d["cols"].index(c) + 1 for c in opt}      # +1 for the intercept column
+            keep = [j for j in range(X.shape[1]) if j not in drop]
+            bn, zn, nn = _fit_arrays(X[:, keep], tgt, lr, h, np.ones(len(lr), bool))
             if bn is not None:
-                spec["fallback"] = {"beta": bn, "cols": [c for c in d["cols"] if c != "logvix"],
+                spec["fallback"] = {"beta": bn, "cols": [c for c in d["cols"] if c not in opt],
                                     "z": (zn * kappa).astype(np.float32), "n_fit": nn}
 
         model["groups"].setdefault(g, {"symbols": d["symbols"], "per_h": {}})
@@ -276,12 +323,13 @@ def asset_class(symbol: str) -> str:
 
 
 def predict_from_bars(symbol, close, high=None, low=None, vix=None, horizons=HORIZONS,
-                      thr=0.02, model=None, earnings_in=None) -> list[dict]:
-    """Core predictor. earnings_in: set of horizons whose window contains an earnings date."""
+                      thr=0.02, model=None, earnings_in=None, volume=None) -> list[dict]:
+    """Core predictor. earnings_in: set of horizons whose window contains an earnings date.
+    volume is used for single names only (it measured reliably NEGATIVE for indices)."""
     model = model or pd.read_pickle(MODEL_PATH)
     g = asset_class(symbol)
     grp = model["groups"][g]
-    f = build_features(close, high, low, vix)
+    f = build_features(close, high, low, vix, volume if g == "single" else None)
     out = []
     for h in horizons:
         spec = grp["per_h"].get(h)
@@ -324,10 +372,20 @@ def predict_from_bars(symbol, close, high=None, low=None, vix=None, horizons=HOR
         qs = np.quantile(z, [0.05, 0.5, 0.95])
         typ = float(np.exp(np.quantile(np.abs(z), 0.5) * sig_h) - 1)
 
+        # Expected (mean) return, E[exp(z*sigma_h)] - 1, over the same z table.
+        # WINSORIZED at 0.5%/99.5% first. The raw mean is unusable: the single-name z table
+        # contains real microcap jumps out to z ~ +400, and exp(400 * sigma_h) overflows any
+        # sensible number -- one observation would set the whole column. z is already sorted,
+        # so the cut points are a direct index rather than a quantile scan.
+        n_z = len(z)
+        lo_i, hi_i = int(0.005 * n_z), int(0.995 * n_z) - 1
+        zw = np.clip(z, z[lo_i], z[hi_i])
+        exp_ret = float(np.mean(np.exp(zw * sig_h)) - 1.0)
+
         out.append({
             "h": h, "ok": True, "symbol": symbol, "asset_class": g, "thr": thr,
             "sigma_h": sig_h, "earn_mult": mult,
-            "typical_move": typ,
+            "typical_move": typ, "exp_return": exp_ret,
             "q05": float(np.exp(qs[0] * sig_h) - 1),
             "q50": float(np.exp(qs[1] * sig_h) - 1),
             "q95": float(np.exp(qs[2] * sig_h) - 1),
@@ -335,6 +393,13 @@ def predict_from_bars(symbol, close, high=None, low=None, vix=None, horizons=HOR
             "degraded": degraded,
             "p_down_big": p[0], "p_down_small": p[1], "p_up_small": p[2], "p_up_big": p[3],
             "p_move": p[0] + p[3], "p_within": p[1] + p[2],
+            # P(up by ANY amount) = 1 - F(0). Note this is structurally IDENTICAL for every
+            # symbol in the same (asset class, horizon): the evaluation point is 0/sigma_h = 0
+            # regardless of sigma, so it cannot vary with the ticker. That is not a bug -- it is
+            # this model honestly reporting that it has no directional information. Measured
+            # direction skill is 0.0-2.3% over the historical up-share, and NEGATIVE for indices
+            # at h >= 10, so any ticker-to-ticker variation here would be noise dressed as signal.
+            "p_up_any": p[2] + p[3], "p_down_any": p[0] + p[1],
             "grade": _grade(g, h, thr)[0], "skill": _grade(g, h, thr)[1],
         })
     return out
@@ -342,19 +407,29 @@ def predict_from_bars(symbol, close, high=None, low=None, vix=None, horizons=HOR
 
 # Measured out-of-sample grade and magnitude skill per (asset class, horizon, threshold%).
 # BSS2 = Brier skill on P(|move| >= thr) against EACH TICKER'S OWN base rate over 21 walk-forward
-# test years -- the honest bar, since a user can get the base rate for free from the ticker's own
-# history. Grading rule: GREEN >= 0.05, AMBER 0.02-0.05, RED < 0.02. These are measurements, not
-# preferences; re-measure with _move_validate.py if the model changes.
+# test years -- the honest bar, since a user can get the base rate free from the ticker's history.
+# Re-measured by _move_validate.py after the LEV+VOL features landed; those raised index h=1/5/10
+# by about +0.004 each and single names by about +0.001.
+#
+# GRADING RULE (two-factor, so a single arbitrary cutoff does not decide it):
+#   可用   BSS2 >= 0.05
+#   谨慎   0.02 <= BSS2 < 0.05, OR BSS2 < 0.02 while ECE is still good and >=15/21 years positive
+#          (a well-calibrated but low-skill answer is worth showing with a caveat, not hiding)
+#   不可用 BSS2 < 0.02 AND fewer than 15 of 21 test years positive
+#   无法分辨 the empirical z has no mass past the threshold; the support gate refuses first anyway
 GRADES = {
-    ("index", 1): {1: ("GREEN", .163), 2: ("GREEN", .194), 3: ("GREEN", .218), 5: ("RES", .204)},
-    ("index", 5): {1: ("GREEN", .077), 2: ("GREEN", .132), 3: ("GREEN", .154), 5: ("GREEN", .143)},
-    ("index", 10): {1: ("GREEN", .053), 2: ("GREEN", .093), 3: ("GREEN", .119), 5: ("GREEN", .135)},
-    ("index", 21): {1: ("RED", .012), 2: ("AMBER", .044), 3: ("GREEN", .079), 5: ("GREEN", .125)},
-    ("single", 1): {1: ("GREEN", .081), 2: ("GREEN", .116), 3: ("GREEN", .125), 5: ("GREEN", .114)},
-    ("single", 5): {1: ("AMBER", .032), 2: ("GREEN", .055), 3: ("GREEN", .073), 5: ("GREEN", .094)},
-    ("single", 10): {1: ("RED", .021), 2: ("AMBER", .034), 3: ("AMBER", .047), 5: ("GREEN", .068)},
-    ("single", 21): {1: ("RED", .014), 2: ("AMBER", .020), 3: ("AMBER", .027), 5: ("AMBER", .042)},
+    ("index", 1): {1: ("GREEN", .173), 2: ("GREEN", .196), 3: ("GREEN", .214), 5: ("RES", .223)},
+    ("index", 5): {1: ("GREEN", .078), 2: ("GREEN", .137), 3: ("GREEN", .160), 5: ("GREEN", .147)},
+    ("index", 10): {1: ("GREEN", .051), 2: ("GREEN", .096), 3: ("GREEN", .124), 5: ("GREEN", .136)},
+    ("index", 21): {1: ("RED", .006), 2: ("AMBER", .035), 3: ("GREEN", .069), 5: ("GREEN", .119)},
+    ("single", 1): {1: ("GREEN", .081), 2: ("GREEN", .115), 3: ("GREEN", .122), 5: ("GREEN", .109)},
+    ("single", 5): {1: ("AMBER", .032), 2: ("GREEN", .056), 3: ("GREEN", .075), 5: ("GREEN", .095)},
+    ("single", 10): {1: ("AMBER", .021), 2: ("AMBER", .034), 3: ("AMBER", .047), 5: ("GREEN", .068)},
+    ("single", 21): {1: ("RED", .013), 2: ("AMBER", .019), 3: ("AMBER", .025), 5: ("AMBER", .041)},
 }
+
+# 显示层翻译。内部代码保持英文不变，便于程序化调用和与研究脚本对照。
+GRADE_CN = {"GREEN": "可用", "AMBER": "谨慎", "RED": "不可用", "RES": "无法分辨"}
 
 
 def _grade(g, h, thr):
@@ -390,29 +465,32 @@ def predict(symbol, horizons=HORIZONS, thr=0.02, period="2y", model=None) -> lis
             v.columns = v.columns.get_level_values(0)
         vix = pd.to_numeric(v["Close"], errors="coerce").dropna()
     return predict_from_bars(symbol, d["Close"], d["High"], d["Low"], vix,
-                             horizons=horizons, thr=thr, model=model)
+                             horizons=horizons, thr=thr, model=model,
+                             volume=d["Volume"] if "Volume" in d else None)
 
 
 # ---------------------------------------------------------------- display
 def format_rows(rows, wide=True) -> str:
     lines = []
     if wide:
-        lines.append(f"  {'期限':<6}{'典型波动':>10}{'涨>阈值':>9}{'区间内':>9}{'跌>阈值':>9}"
-                     f"{'|移动|>阈值':>12}{'5%差情形':>11}{'95%好情形':>11}{'评级':>7}{'技能':>7}")
+        lines.append(f"  {'期限':<6}{'典型波动':>10}{'涨超阈值':>9}{'区间内':>9}{'跌超阈值':>9}"
+                     f"{'幅度超阈值':>12}{'上涨(任意)':>11}{'期望收益':>10}{'偏差情形':>11}{'乐观情形':>11}"
+                     f"{'可信度':>8}{'技能分':>8}")
     for r in rows:
         if not r.get("ok"):
             lines.append(f"  h={r['h']:<4} {r.get('why','不可用')}")
             continue
         if not r["in_support"]:
             why = ("阈值远超该标的波动范围，无法分辨" if r["support"] > SUPPORT_HI
-                   else "阈值窄于噪音，退化为方向猜测")
+                   else "阈值窄于波动噪音，问题退化为纯方向猜测")
             lines.append(f"  {str(r['h'])+'日':<6}{r['typical_move']*100:>9.2f}%   —— {why} ——")
             continue
         star = "*" if r["earn_mult"] > 1 else " "
         lines.append(f"  {str(r['h'])+'日':<6}{r['typical_move']*100:>9.2f}%{r['p_up_big']*100:>8.1f}%"
                      f"{r['p_within']*100:>8.1f}%{r['p_down_big']*100:>8.1f}%"
-                     f"{r['p_move']*100:>11.1f}%{star}{r['q05']*100:>10.1f}%{r['q95']*100:>10.1f}%"
-                     f"{r['grade']:>7}{r['skill']:>7.3f}")
+                     f"{r['p_move']*100:>11.1f}%{star}{r['p_up_any']*100:>10.1f}%"
+                     f"{r['exp_return']*100:>+9.2f}%{r['q05']*100:>10.1f}%{r['q95']*100:>10.1f}%"
+                     f"{GRADE_CN.get(r['grade'], r['grade']):>8}{r['skill']:>8.3f}")
     return "\n".join(lines)
 
 
@@ -441,10 +519,18 @@ def main():
         cls = "指数/ETF" if asset_class(s) == "index" else "个股"
         print(f"\n{s}  ({cls})  阈值 ±{args.thr:g}%")
         print(format_rows(rows))
-    print("\n  评级 GREEN=可用 / AMBER=只看|移动|一列 / RED=不要看单一数字（按实测BSS2：>=.05绿, .02-.05黄, <.02红）")
-    print("  技能 = 实测Brier skill：相对'该标的自己的历史频率'减少了多少误差（21年滚动前瞻检验）")
-    print("  * = 该窗口内有财报，σ 已按财报乘数放大（仅个股）")
-    print("  注意：全部技能都在'|移动|>阈值'这一列。涨跌方向的拆分主要由漂移和偏度决定，不是预测。")
+    print("\n  可信度：可用 / 谨慎（只看「幅度超阈值」一列）/ 不可用（不要看单个数字）/ 无法分辨")
+    print("        判定标准为实测技能分：≥.05 可用，.02–.05 谨慎，<.02 不可用")
+    print("  技能分 = Brier skill score（无贴切中译，保留原名）：相对「该标的自身历史频率」")
+    print("        减少了多少预测误差，来自 21 年滚动前瞻检验")
+    print("  偏差情形 / 乐观情形 = 第 5 / 第 95 百分位收益，即「差到什么程度」「好到什么程度」")
+    print("  期望收益 = 分布的均值（0.5%/99.5% 截尾）。它等于「漂移 × 波动率」，同样不含方向信息：")
+    print("        波动越大的标的这一列必然越高，纯属结构使然，不是说它更值得买。")
+    print("        实证上低波动股票的风险调整后收益反而更好，所以不要按这一列排序选股。")
+    print("  * = 该窗口内有财报，波动率已按财报乘数放大（仅个股）")
+    print("  注意：技能全部集中在「幅度超阈值」一列。涨跌方向的拆分由漂移和偏度决定，不是预测。")
+    print("  「上涨(任意)」= P(收益>0)。同一资产类别与期限下，它对所有标的都是同一个数字——")
+    print("        因为判定点 0/波动率 = 0，与波动率无关。这正是模型在如实说明：它没有方向信息。")
 
 
 if __name__ == "__main__":

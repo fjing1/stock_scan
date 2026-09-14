@@ -1,0 +1,20 @@
+universe: 284 symbols
+business days to try: 2118
+  250/2118 days, 60,646 rows, 5s
+  500/2118 days, 123,222 rows, 9s
+  750/2118 days, 187,863 rows, 13s
+  1000/2118 days, 254,512 rows, 16s
+  1250/2118 days, 320,236 rows, 20s
+  1500/2118 days, 383,149 rows, 24s
+  1750/2118 days, 444,190 rows, 27s
+  2000/2118 days, 503,306 rows, 31s
+
+download+parse wall clock: 33.0s  (0.5 min)
+HTTP code histogram: {200: 2039, 403: 79}
+rows=530,267  symbols=284  span 2018-08-01 .. 2026-09-11  trading days=2039
+saved -> _data_probe_finra_hist.pkl
+      date symbol    short  exempt    total
+2018-08-01      A 127212.0    14.0 658064.0
+2018-08-02      A  87942.0   600.0 523623.0
+2018-08-03      A 120105.0     0.0 482511.0
+memory: 44.8 MB
