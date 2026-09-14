@@ -1,0 +1,135 @@
+// This Pine Script(R) code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © bigbenv5
+
+//@version=6
+// RSI logic extracted from 寻龙诀 Panel V1 (xunlong_panel.pine, sections 3 + 4) into a
+// standalone indicator: no L2 t/p trend window, no 红绿柱. Everything below is byte-for-byte
+// the panel's RSI behaviour -- OBV-sourced Wilder RSI, the 8/22/85 SMA stack with the
+// ma8-over-ma22 buy alert, the optional regular-divergence block, and the latest-values table.
+indicator(title="RSI(OBV) 分金 V1", shorttitle="RSI(OBV)", overlay=false, format=format.price, precision=2, max_labels_count=100, scale=scale.right)
+
+//=============================//
+// 1) RSI 图（基于 TradingView 原版 RSI，源换成 OBV）
+//=============================//
+grp_rsi = "RSI Settings"
+rsiLengthInput = input.int(14, minval=1, title="RSI Length", group=grp_rsi)
+calculateDivergence = input.bool(false, title="Calculate Divergence", group=grp_rsi, display=display.none, tooltip="Calculating divergences is needed in order for divergence alerts to fire.")
+
+// RSI runs on OBV (On-Balance Volume), not price -- standard OBV: cumulative sum of
+// volume signed by the direction of the close-to-close change.
+obvSource = ta.cum(math.sign(ta.change(close)) * volume)
+
+change = ta.change(obvSource)
+up = ta.rma(math.max(change, 0), rsiLengthInput)
+down = ta.rma(-math.min(change, 0), rsiLengthInput)
+rsi = down == 0 ? 100 : up == 0 ? 0 : 100 - (100 / (1 + up / down))
+
+rsiPlot = plot(rsi, "RSI", color=#7E57C2)
+rsiUpperBand = hline(60, "RSI Upper Band", color=#787B86)
+midline = hline(50, "RSI Middle Band", color=color.new(#787B86, 50))
+rsiLowerBand = hline(40, "RSI Lower Band", color=#787B86)
+fill(rsiUpperBand, rsiLowerBand, color=color.rgb(126, 87, 194, 90), title="RSI Background Fill")
+midLinePlot = plot(50, color=na, editable=false, display=display.none)
+fill(rsiPlot, midLinePlot, 100, 70, top_color=color.new(color.green, 0), bottom_color=color.new(color.green, 100), title="Overbought Gradient Fill")
+fill(rsiPlot, midLinePlot, 30, 0, top_color=color.new(color.red, 100), bottom_color=color.new(color.red, 0), title="Oversold Gradient Fill")
+
+// Smoothing MAs: 3 fixed SMAs of RSI (8 / 22 / 85), with a buy alert on ma8 crossing over ma22.
+ma8 = ta.sma(rsi, 8)
+ma22 = ta.sma(rsi, 22)
+ma85 = ta.sma(rsi, 85)
+plot(ma8, "RSI MA8", color=color.yellow, linewidth=2)
+plot(ma22, "RSI MA22", color=color.orange, linewidth=2)
+plot(ma85, "RSI MA85", color=color.fuchsia, linewidth=2)
+
+ma8CrossOverMa22 = ta.crossover(ma8, ma22)
+plotshape(ma8CrossOverMa22, title="MA8 x MA22 Buy", text="买", style=shape.labelup, location=location.top, color=color.lime, textcolor=color.black, size=size.small)
+alertcondition(ma8CrossOverMa22, title="RSI MA8 crosses over MA22 (Buy)", message="{{ticker}}: RSI MA8 crossed over MA22 on {{interval}} — buy signal.")
+
+//=============================//
+// 2) Divergence
+//=============================//
+lookbackRight = 5
+lookbackLeft = 5
+rangeUpper = 60
+rangeLower = 5
+bearColor = color.red
+bullColor = color.green
+textColor = color.white
+noneColor = color.new(color.white, 100)
+
+_inRange(bool cond) =>
+    bars = ta.barssince(cond)
+    rangeLower <= bars and bars <= rangeUpper
+
+plFound = false
+phFound = false
+bullCond = false
+bearCond = false
+rsiLBR = rsi[lookbackRight]
+
+if calculateDivergence
+    plFound := not na(ta.pivotlow(rsi, lookbackLeft, lookbackRight))
+    rsiHL = rsiLBR > ta.valuewhen(plFound, rsiLBR, 1) and _inRange(plFound[1])
+    lowLBR = low[lookbackRight]
+    priceLL = lowLBR < ta.valuewhen(plFound, lowLBR, 1)
+    bullCond := priceLL and rsiHL and plFound
+
+    phFound := not na(ta.pivothigh(rsi, lookbackLeft, lookbackRight))
+    rsiLH = rsiLBR < ta.valuewhen(phFound, rsiLBR, 1) and _inRange(phFound[1])
+    highLBR = high[lookbackRight]
+    priceHH = highLBR > ta.valuewhen(phFound, highLBR, 1)
+    bearCond := priceHH and rsiLH and phFound
+
+plot(plFound ? rsiLBR : na, offset=-lookbackRight, title="Regular Bullish", linewidth=2, color=(bullCond ? bullColor : noneColor), display=display.pane, editable=calculateDivergence)
+plotshape(bullCond ? rsiLBR : na, offset=-lookbackRight, title="Regular Bullish Label", text=" Bull ", style=shape.labelup, location=location.absolute, color=bullColor, textcolor=textColor, display=display.pane, editable=calculateDivergence)
+plot(phFound ? rsiLBR : na, offset=-lookbackRight, title="Regular Bearish", linewidth=2, color=(bearCond ? bearColor : noneColor), display=display.pane, editable=calculateDivergence)
+plotshape(bearCond ? rsiLBR : na, offset=-lookbackRight, title="Regular Bearish Label", text=" Bear ", style=shape.labeldown, location=location.absolute, color=bearColor, textcolor=textColor, display=display.pane, editable=calculateDivergence)
+
+alertcondition(bullCond, title="Regular Bullish Divergence", message="Found a new Regular Bullish Divergence, `Pivot Lookback Right` number of bars to the left of the current bar.")
+alertcondition(bearCond, title="Regular Bearish Divergence", message="Found a new Regular Bearish Divergence, `Pivot Lookback Right` number of bars to the left of the current bar.")
+
+//=============================//
+// 3) RSI 最新数据 table
+//=============================//
+grp_tb = "RSI 数据窗口"
+show_rsi_table = input.bool(true, "显示右侧数据窗口", group=grp_tb)
+rsi_pos_opt = input.string("右上", "窗口位置", options=["右上","右下","左上","左下"], group=grp_tb)
+table_alpha = input.int(70, "窗口底色透明度", minval=0, maxval=100, group=grp_tb)
+
+f_pos(opt) =>
+    opt == "右上" ? position.top_right :
+     opt == "右下" ? position.bottom_right :
+     opt == "左上" ? position.top_left :
+     position.bottom_left
+
+var table rsi_tb = table.new(
+     position=f_pos(rsi_pos_opt),
+     columns=4, rows=2,
+     bgcolor=color.new(color.black, table_alpha),
+     frame_color=color.new(color.white, 0),
+     frame_width=1,
+     border_color=color.new(color.white, 0),
+     border_width=1
+)
+
+rsi2 = nz(rsi[2])
+rsi1 = nz(rsi[1])
+rsi0 = nz(rsi)
+rsi_trend_up = (rsi0 > rsi1) and (rsi1 > rsi2)
+rsi_trend_down = (rsi0 < rsi1) and (rsi1 < rsi2)
+rsi_trend_txt = rsi_trend_up ? "↑ 增大" : rsi_trend_down ? "↓ 减小" : "→ 震荡"
+rsi_trend_col = rsi_trend_up ? color.lime : rsi_trend_down ? color.red : color.orange
+
+if barstate.islast
+    table.clear(rsi_tb, 0, 0, 3, 1)
+    if show_rsi_table
+        bg_head = color.new(color.black, math.min(table_alpha + 10, 95))
+        bg_body = color.new(color.black, table_alpha)
+        table.cell(rsi_tb, 0, 0, "RSI-2", text_color=color.white, bgcolor=bg_head)
+        table.cell(rsi_tb, 1, 0, "RSI-1", text_color=color.white, bgcolor=bg_head)
+        table.cell(rsi_tb, 2, 0, "RSI", text_color=color.white, bgcolor=bg_head)
+        table.cell(rsi_tb, 3, 0, "趋势", text_color=color.white, bgcolor=bg_head)
+        table.cell(rsi_tb, 0, 1, str.tostring(rsi2, "#.##"), text_color=rsi_trend_col, bgcolor=bg_body)
+        table.cell(rsi_tb, 1, 1, str.tostring(rsi1, "#.##"), text_color=rsi_trend_col, bgcolor=bg_body)
+        table.cell(rsi_tb, 2, 1, str.tostring(rsi0, "#.##"), text_color=rsi_trend_col, bgcolor=bg_body)
+        table.cell(rsi_tb, 3, 1, rsi_trend_txt, text_color=rsi_trend_col, bgcolor=bg_body)

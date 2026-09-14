@@ -39,7 +39,7 @@ LATEST = BASE_DIR / "scan_result_latest.xlsx"
 HIST = BASE_DIR / "history"
 DEFAULT_OUT = BASE_DIR / "reports" / "strategy_dataset.csv"
 
-CTX_LABELS = {"市场环境", "日线判断", "4H提示", "轮动判断", "指数快照", "策略提示"}
+CTX_LABELS = {"市场环境", "日线判断", "4H提示", "轮动判断", "波动率", "指数快照", "策略提示"}
 STOP = ("Top5统计", "排名", "触发样本", "市场环境", "信号快照", "No signals")
 SUBFEATS = ["rank120", "RSI", "L2_trend", "L2_pump", "H4_RSI", "H4_FJ"]
 

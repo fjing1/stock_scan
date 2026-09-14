@@ -265,7 +265,13 @@ def portfolio_metrics(daily_ret_by_date, calendar, date_lo=None, date_hi=None):
 
 
 def deflated_sharpe(best_sr, all_srs, n_obs):
-    """Bailey & Lopez de Prado DSR haircut for selecting the best of N trials."""
+    """Bailey & Lopez de Prado DSR haircut for selecting the best of N trials.
+
+    UNITS MATTER: best_sr / all_srs must be **per-observation** (non-annualized)
+    Sharpe ratios, and n_obs the number of observations they were measured over.
+    Feeding annualized Sharpes inflates (best_sr - sr0)*sqrt(n_obs-1) by ~sqrt(252)
+    and the DSR saturates at 1.000, i.e. no haircut at all.
+    """
     from math import sqrt
     from statistics import NormalDist
     srs = np.asarray([s for s in all_srs if np.isfinite(s)])
@@ -412,14 +418,20 @@ def main():
     fam_df = pd.DataFrame(fam_rows).sort_values("test_cagr", ascending=False)
     print(fam_df.to_string(index=False, float_format=lambda x: f"{x:.3f}"))
 
-    dsr = deflated_sharpe(srs.max(), srs, TRADING_DAYS * 3)
+    # res["sharpe"] 是全样本年化夏普；DSR 要的是每期夏普 + 真实观测期数。
+    # 旧代码传年化值和写死的 TRADING_DAYS*3，DSR 恒等于 1.000，等于没做校正。
+    srs_per_obs = srs / np.sqrt(TRADING_DAYS)
+    dsr = deflated_sharpe(srs_per_obs.max(), srs_per_obs, len(cal))
     print("\n" + "=" * 124)
     print("OVERFIT HAIRCUT  (Deflated Sharpe over the whole grid)")
     print("=" * 124)
     print(f"Baseline (signal-only):  CAGR {base['cagr']:.2%}  Sharpe {base['sharpe']:.2f}  MaxDD {base['maxdd']:.2%}  MAR {base['mar']:.2f}")
-    print(f"Best Sharpe in grid:     {srs.max():.2f}    Trials: {len(srs)}")
+    print(f"Best Sharpe in grid:     {srs.max():.2f} (annualized)    Trials: {len(srs)}    Obs: {len(cal)}")
     if isinstance(dsr, tuple):
-        print(f"Deflated Sharpe Ratio P[SR>SR0]: {dsr[0]:.3f}  (multiple-testing SR0 threshold = {dsr[1]:.2f})")
+        print(f"Deflated Sharpe Ratio P[SR>SR0]: {dsr[0]:.3f}  "
+              f"(multiple-testing SR0 threshold = {dsr[1] * np.sqrt(TRADING_DAYS):.2f} annualized)")
+    else:
+        print("Deflated Sharpe Ratio: n/a (需要 >=2 个有限夏普且方差>0)")
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     res.drop(columns=["params"]).to_csv(OUT_DIR / "exit_backtest_results.csv", index=False)
