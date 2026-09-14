@@ -32,6 +32,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import warnings
 from pathlib import Path
 
@@ -250,6 +251,8 @@ def main():
     ap.add_argument("--watchlist", action="store_true")
     ap.add_argument("--fetch", action="store_true", help="先抓取缺失标的的 SEC 数据")
     ap.add_argument("--out", default=None, help="写出 CSV")
+    ap.add_argument("--flags-cache", action="store_true",
+                    help="写出 _fund_flags.json 供 scan_stocks.py 只读 join")
     ap.add_argument("--verbose", action="store_true", help="逐标的展开明细")
     a = ap.parse_args()
 
@@ -308,6 +311,16 @@ def main():
                 if np.isfinite(r.get(k, np.nan)):
                     print(f"    {k:<22}{r[k]/1e6:>14,.0f} 百万")
             print(f"    标记: {r['flags']}")
+
+    if a.flags_cache:
+        # Tiny JSON keyed by symbol, for scan_stocks.py to join read-only. Deliberately NOT the
+        # panel or the metrics frame: the scan must never depend on a multi-MB artifact or on
+        # pandas-version pickle compatibility, and it must be able to shrug this file off entirely.
+        cache = {"generated": str(pd.Timestamp.now().date()),
+                 "flags": {r["symbol"]: r["flags"] for r in rows if r.get("flags")}}
+        cp = HERE / "_fund_flags.json"
+        cp.write_text(json.dumps(cache, ensure_ascii=False, indent=1))
+        print(f"\n已写出 {cp.name}（{len(cache['flags'])} 个标的有标记）")
 
     if a.out:
         p = Path(a.out)

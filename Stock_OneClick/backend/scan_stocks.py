@@ -11,6 +11,7 @@ import shutil
 import re
 import sys
 import os
+import json
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
@@ -2781,12 +2782,33 @@ def export_tv_buy_signal_notes(
             ["_score_sort", "_raw_sort", "symbol"], ascending=[False, False, True]
         ).drop_duplicates("symbol", keep="first")
 
+        # 基本面标记：只读 join，且 fail-open。来自 fund_metrics.py --flags-cache（季度级刷新）。
+        # 三条硬约束：(1) 缓存缺失/损坏/过期一律当作没有，绝不让基本面拖垮日频扫描；
+        # (2) 标记只写进备注版，不进 Excel 的评分列；(3) 不参与 观海买点分 也不参与风险分——
+        # 基本面质量在本仓库从未被测量过有前瞻边际，阈值是判断而非校准结果。
+        fund_flags, fund_age = {}, None
+        try:
+            _fp = Path(__file__).with_name("_fund_flags.json")
+            if _fp.exists():
+                _fc = json.loads(_fp.read_text())
+                fund_flags = _fc.get("flags", {}) or {}
+                _gen = pd.Timestamp(_fc.get("generated"))
+                fund_age = (pd.Timestamp(date_str) - _gen).days
+        except Exception:
+            fund_flags, fund_age = {}, None
+
         pure_lines = []
         note_lines = [
             f"# {date_str} 当日买入触发样本",
             "# 格式：TV代码 | 触发日期 | 观海买点分(原始分) | 触发规则 | 板块 | 收盘 | "
-            "RSI | rank120 | 4H_RSI/分金 | 段涨幅 | 量比20日 | 移动止损(5×ATR22) | 距止损% | 止损状态",
+            "RSI | rank120 | 4H_RSI/分金 | 段涨幅 | 量比20日 | 移动止损(5×ATR22) | 距止损% | 止损状态"
+            + (" | 基本面标记" if fund_flags else ""),
         ]
+        if fund_flags:
+            note_lines.append(
+                f"# 基本面标记来自 SEC XBRL（fund_metrics.py，缓存 {fund_age} 天前生成，"
+                f"{len(fund_flags)} 个标的有标记）。含义是「去读一下这份财报」，"
+                "不参与买卖分与风险分。")
         for _, r in rows.iterrows():
             symbol = str(r["symbol"]).strip().upper()
             tv_symbol = build_tv_symbol(symbol, ex_map.get(symbol, ""))
@@ -2813,6 +2835,7 @@ def export_tv_buy_signal_notes(
                 f"{_fmt(d.get('RSI'), '.0f')} | {_fmt(d.get('rank120'), '.2f')} | {h4} | "
                 f"{_fmt(d.get('gain_pct'), '.1%')} | {_fmt(d.get('vol_ratio'), '.1f', 'x')} | "
                 f"{trail_txt} | {dist_stop or '-'} | {r.get('止损状态', '')}"
+                + (f" | {fund_flags.get(symbol, '')}" if fund_flags else "")
             )
 
         # —— 盘前观察 / 预警升级候选（仅提示，不自动升级；升级规则待回测确认）——
