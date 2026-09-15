@@ -177,6 +177,18 @@ def resolve(today: str | None = None, refetch: bool = False, verbose: bool = Tru
                 if not np.isfinite(val):
                     rows.append({**_flat(r, c), "action": "数据缺失，仍 pending"})
                     continue
+                # FRESHNESS GUARD. A due date passing does not mean new data exists. Without this,
+                # the resolver compares the SAME figure the verdict was written against to its own
+                # threshold and emits a meaningless hit/miss -- observed: an FY2026 gross-margin
+                # checkpoint "resolved" as miss at 0.4691 vs a 0.4691 threshold, because only
+                # FY2025 had been filed. Require a filing dated after the verdict.
+                newest = panel[(panel.symbol == r["symbol"])].filed.max()
+                if pd.isna(newest) or newest <= pd.Timestamp(r["date"]):
+                    rows.append({**_flat(r, c),
+                                 "action": f"到期但无新申报（最新报送 "
+                                           f"{newest.date() if pd.notna(newest) else '无'}"
+                                           f" <= 判断日 {r['date']}），仍 pending"})
+                    continue
                 thr = c.get("threshold")
                 hit = (val > thr) if c["direction"] == "above" else (val < thr)
                 c["status"] = "hit" if hit else "miss"
@@ -222,10 +234,15 @@ def scorecard(today: str | None = None) -> dict:
         s, b = r["symbol"], r["benchmark"]
         if s not in d.columns:
             continue
-        ser = d[s].dropna()
-        ser = ser[ser.index >= pd.Timestamp(r["date"])]
-        if ser.empty:
+        ser_all = d[s].dropna()
+        if ser_all.empty:
             continue
+        ser = ser_all[ser_all.index >= pd.Timestamp(r["date"])]
+        if ser.empty:
+            # Registered today, or the provider has not published the bar for the record date yet.
+            # Fall back to the newest available close so the row shows 0% instead of disappearing:
+            # a scorecard that silently drops records is worse than one that reports zero elapsed.
+            ser = ser_all.tail(1)
         row = {"id": r["id"], "date": r["date"], "symbol": s, "verdict": r["verdict"],
                "days_elapsed": int((today - pd.Timestamp(r["date"])).days),
                "price_at_call": r["price"], "price_now": float(ser.iloc[-1])}
@@ -251,6 +268,10 @@ def scorecard(today: str | None = None) -> dict:
         rows.append(row)
 
     df = pd.DataFrame(rows)
+    if df.empty:
+        print(f"台账有 {len(recs)} 条记录，但没有一条能取到价格序列（数据源问题）。"
+              f"涉及标的: {', '.join(syms)}")
+        return {"df": df, "n": 0, "resolved": 0}
     print("=" * 112)
     print(f"基本面判断台账  {len(df)} 条  （每条判断都带成交价与基准，可计算超额收益）")
     print("=" * 112)
@@ -263,19 +284,20 @@ def scorecard(today: str | None = None) -> dict:
             o[c] = o[c].map(lambda x: f"{x*100:+.1f}%" if pd.notna(x) else "—")
     print(o.to_string(index=False))
 
-    resolved = int(df.cp_hit.sum() + df.cp_miss.sum()) if "cp_hit" in df else 0
+    resolved = int(df["cp_hit"].sum() + df["cp_miss"].sum()) if "cp_hit" in df.columns else 0
+    pending = int(df["cp_pending"].sum()) if "cp_pending" in df.columns else 0
     n_verdicts = len(df)
-    print(f"\n已判定 checkpoint {resolved} 个，待判定 {int(df.cp_pending.sum())} 个")
+    print(f"\n已判定 checkpoint {resolved} 个，待判定 {pending} 个")
     if n_verdicts < MIN_N:
         print(f"⚠️ 判断数 {n_verdicts} < {MIN_N}，**不报命中率**。")
         print("   n=1 时命中率只能是 0% 或 100%，两者都无意义；本仓库已有六个在小样本上")
         print("   看起来成立、实测归零的信号。等样本够了这里才会出数字。")
     else:
-        for v in df.verdict.unique():
-            sub = df[df.verdict == v]
-            if "excess_spy" in sub and sub.excess_spy.notna().any():
+        for v in df["verdict"].unique():
+            sub = df[df["verdict"] == v]
+            if "excess_spy" in sub.columns and sub["excess_spy"].notna().any():
                 print(f"  {v:<12} n={len(sub):>3}  中位超额(vs SPY) "
-                      f"{sub.excess_spy.median()*100:+.1f}%")
+                      f"{sub['excess_spy'].median()*100:+.1f}%")
     return {"df": df, "n": n_verdicts, "resolved": resolved}
 
 

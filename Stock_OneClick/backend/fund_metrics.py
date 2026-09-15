@@ -77,13 +77,57 @@ def _yoy(s: pd.DataFrame, tol_days: int = 45):
     return _g(last["val"], cand["val"]), cand["end"].date()
 
 
+
+def _quarterly_complete(panel, symbol, concept, when=None) -> pd.DataFrame:
+    """Quarterly series with MISSING Q4 RECONSTRUCTED, which is what makes a TTM honest.
+
+    XBRL quarterly duration facts omit Q4 for most filers: the annual report covers the full year
+    and Q4 is never tagged separately. Consequences, both of which shipped and produced wrong
+    numbers for AAPL before this fix:
+      * a 4-row TTM sum spans 15 months or, if a span guard rejects it, silently falls back to the
+        FY figure -- understating Apple's TTM revenue by 12.2% ($416,161M vs the true $466,823M);
+      * a 4-row EPS sum adds NON-CONSECUTIVE quarters (skipping Q4FY25, re-using Q3FY25), which
+        is how a 38.2x P/E was reported as 39.5x.
+    Reconstruction: Q4 = FY - (sum of that year's Q1..Q3). Rows are marked `derived` so a caller
+    can tell a filed fact from an arithmetic one."""
+    q = F.series(panel, symbol, concept, annual=False, when=when)
+    a = F.series(panel, symbol, concept, annual=True, when=when)
+    if q.empty or a.empty:
+        return q
+    q = q.copy(); q["derived"] = False
+    out = [q]
+    for _, fy in a.iterrows():
+        fy_end = fy["end"]
+        # the three quarters that close inside this fiscal year
+        inside = q[(q.end > fy_end - pd.Timedelta(days=370)) & (q.end < fy_end - pd.Timedelta(days=40))]
+        if len(inside) != 3:
+            continue                      # cannot reconstruct safely; leave the gap visible
+        if ((q.end - fy_end).abs() <= pd.Timedelta(days=20)).any():
+            continue                      # Q4 was actually filed
+        out.append(pd.DataFrame([{**{c: fy.get(c) for c in q.columns if c in fy.index},
+                                  "end": fy_end, "val": float(fy["val"] - inside.val.sum()),
+                                  "derived": True}]))
+    r = pd.concat(out, ignore_index=True).sort_values("end")
+    return r.drop_duplicates(subset=["end"], keep="first").reset_index(drop=True)
+
+
+def _ttm(s: pd.DataFrame, tol=(330, 400)):
+    """Sum of the last four quarters, but ONLY if they really span about a year."""
+    if len(s) < 4:
+        return np.nan, np.nan
+    span = (s.end.iloc[-1] - s.end.iloc[-4]).days
+    if not (tol[0] - 90 <= span <= tol[1] - 90):     # 4 period-ENDS span ~3 quarters
+        return np.nan, span
+    return float(s.val.iloc[-4:].sum()), span
+
+
 def metrics(panel: pd.DataFrame, symbol: str, when=None, price: float | None = None) -> dict:
     """One symbol's metrics using only filings available at `when` (None = everything filed)."""
     S = lambda c, annual: F.series(panel, symbol, c, annual=annual, when=when)
     m = {"symbol": symbol}
 
     rev_a = S("revenue", True)
-    rev_q = S("revenue", False)
+    rev_q = _quarterly_complete(panel, symbol, "revenue", when)
     m["n_annual"] = len(rev_a)
     m["n_quarter"] = len(rev_q)
     if rev_a.empty and rev_q.empty:
@@ -106,13 +150,10 @@ def metrics(panel: pd.DataFrame, symbol: str, when=None, price: float | None = N
         m["rev_g_q_yoy"], m["rev_q_yoy_base"] = _yoy(rev_q)
         # TTM only if the last 4 quarters really span ~a year; the missing-Q4 gap makes a naive
         # 4-row sum understate TTM revenue badly for filers whose Q4 is absent.
-        if len(rev_q) >= 4:
-            span = (rev_q.end.iloc[-1] - rev_q.end.iloc[-4]).days
-            m["ttm_span_days"] = span
-            m["revenue_ttm"] = (float(rev_q.val.iloc[-4:].sum()) if 250 <= span <= 300
-                                else (m.get("revenue_fy", np.nan)))
-        else:
-            m["revenue_ttm"] = m.get("revenue_fy", np.nan)
+        ttm, span = _ttm(rev_q)
+        m["ttm_span_days"] = span
+        m["revenue_ttm"] = ttm if np.isfinite(ttm) else m.get("revenue_fy", np.nan)
+        m["revenue_ttm_derived"] = bool(rev_q.get("derived", pd.Series(dtype=bool)).tail(4).any())
     elif not rev_a.empty:
         m["revenue_ttm"] = m["revenue_fy"]
 
@@ -175,11 +216,34 @@ def metrics(panel: pd.DataFrame, symbol: str, when=None, price: float | None = N
         m["dilution_yoy"], _ = _yoy(sh)
 
     # ---- balance sheet
-    def inst_latest(c):
+    # STALENESS GUARD, and it is load-bearing. A tag a company stopped using still has a "latest"
+    # value, and F.latest() will happily return it: Apple's AvailableForSaleSecurities* tags stop
+    # in 2011, so an unguarded sum adds a 2011 balance to a 2025 one. Only accept a balance whose
+    # period end is within ~15 months of the newest balance-sheet date we have for this symbol.
+    inst = panel[(panel.symbol == symbol.upper()) & (panel.kind == "instant")]
+    if when is not None:
+        inst = inst[inst.filed <= pd.Timestamp(when)]
+    ref_end = inst.end.max() if not inst.empty else None
+
+    def inst_latest(c, max_stale_days=460):
         r = F.latest(panel, symbol, c, when=when, kind="instant")
+        if r is None:
+            return np.nan
+        if ref_end is not None and (ref_end - r["end"]).days > max_stale_days:
+            return np.nan          # abandoned tag; do not mix eras
         return _val(r)
-    cash, sti, debt = inst_latest("cash"), inst_latest("short_term_inv"), inst_latest("debt_total")
-    m["net_cash"] = np.nansum([cash, sti]) - (debt if np.isfinite(debt) else 0.0)
+
+    cash = inst_latest("cash")
+    sti, lti = inst_latest("short_term_inv"), inst_latest("long_term_inv")
+    # prefer the company's own total term-debt line; fall back to summing the two halves
+    d_tot = inst_latest("debt_term_total")
+    if not np.isfinite(d_tot):
+        d_tot = np.nansum([inst_latest("debt_term_nc"), inst_latest("debt_term_c")])
+    d_short = inst_latest("debt_short")
+    m["cash_and_inv"] = float(np.nansum([cash, sti, lti]))
+    m["debt_total"] = float(np.nansum([d_tot, d_short]))
+    m["net_cash"] = m["cash_and_inv"] - m["debt_total"]
+    m["bs_as_of"] = ref_end.date() if ref_end is not None else None
 
     # ---- valuation (needs a live price and share count)
     if price and np.isfinite(m.get("shares", np.nan)):
@@ -190,10 +254,10 @@ def metrics(panel: pd.DataFrame, symbol: str, when=None, price: float | None = N
         m["ev_sales"] = ev / ttm if np.isfinite(ttm) and ttm else np.nan
         if np.isfinite(gp) and rev:
             m["ev_gp"] = ev / (gp / rev * ttm) if np.isfinite(ttm) and ttm else np.nan
-        eps = S("eps_diluted", False)
-        if len(eps) >= 4:
-            e_ttm = float(eps.val.iloc[-4:].sum())
-            m["eps_ttm_gaap"] = e_ttm
+        eps = _quarterly_complete(panel, symbol, "eps_diluted", when)
+        e_ttm, e_span = _ttm(eps)
+        if np.isfinite(e_ttm):
+            m["eps_ttm_gaap"], m["eps_ttm_span"] = e_ttm, e_span
             m["pe_gaap"] = price / e_ttm if e_ttm > 0 else np.nan
     return m
 

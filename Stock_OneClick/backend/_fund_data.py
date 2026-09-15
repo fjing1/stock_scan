@@ -79,10 +79,21 @@ CONCEPTS: dict[str, list[str]] = {
     "capex": ["PaymentsToAcquirePropertyPlantAndEquipment",
               "PaymentsToAcquireProductiveAssets"],
     "cash": ["CashAndCashEquivalentsAtCarryingValue", "CashCashEquivalentsAndShortTermInvestments"],
-    "short_term_inv": ["ShortTermInvestments", "MarketableSecuritiesCurrent",
+    "short_term_inv": ["MarketableSecuritiesCurrent", "ShortTermInvestments",
                        "AvailableForSaleSecuritiesDebtSecuritiesCurrent"],
-    "debt_total": ["DebtLongtermAndShorttermCombinedAmount", "LongTermDebt",
-                   "LongTermDebtNoncurrent"],
+    # Long-term investments were originally omitted and that was a large error: Apple holds
+    # $77.7bn in MarketableSecuritiesNoncurrent against $35.9bn of actual cash, so leaving it out
+    # turned +$33.7bn of net cash into a reported -$8.9bn of net debt -- a $42bn mistake on the
+    # EV that feeds every valuation multiple.
+    "long_term_inv": ["MarketableSecuritiesNoncurrent", "LongTermInvestments",
+                      "AvailableForSaleSecuritiesDebtSecuritiesNoncurrent"],
+    # Debt is split so the aggregation cannot double-count. For Apple, LongTermDebt ($90.7bn) is
+    # already LongTermDebtNoncurrent ($78.3bn) + LongTermDebtCurrent ($12.4bn), so summing all
+    # three inflates debt by 78%. Commercial paper is NOT inside LongTermDebt and must be added.
+    "debt_term_total": ["DebtLongtermAndShorttermCombinedAmount", "LongTermDebt"],
+    "debt_term_nc": ["LongTermDebtNoncurrent"],
+    "debt_term_c": ["LongTermDebtCurrent"],
+    "debt_short": ["CommercialPaper", "ShortTermBorrowings", "OtherShortTermBorrowings"],
     "receivables": ["AccountsReceivableNetCurrent", "ReceivablesNetCurrent"],
     "contract_asset": ["ContractWithCustomerAssetNetCurrent", "ContractWithCustomerAssetNet"],
     "deferred_revenue": ["ContractWithCustomerLiabilityCurrent", "DeferredRevenueCurrent"],
@@ -297,8 +308,17 @@ def series(panel: pd.DataFrame, symbol: str, concept: str, *, annual: bool,
         d = d[d.annual] if annual else d
     if d.empty:
         return pd.DataFrame()
-    # one row per period end: keep the latest-filed version known at `when`
-    d = d.sort_values(["end", "filed"]).drop_duplicates(subset=["end"], keep="last")
+    # One row per period end. Precedence, in order:
+    #   1. latest `filed`  -- the most recent restatement is the current truth
+    #   2. highest LADDER PRIORITY among rows sharing that filing
+    # Step 2 is not cosmetic. Sorting on ["end","filed"] alone and keeping "last" silently kept
+    # whichever tag happened to sort last, which INVERTS the ladder when two tags carry the same
+    # period in the same filing -- that is how `shares_diluted` returned the Basic share count
+    # instead of Diluted. Rank ascending = higher priority, so sort it DESCENDING and keep last.
+    rank = {tag: i for i, tag in enumerate(CONCEPTS.get(concept, []))}
+    d = d.assign(_rank=d.tag.map(lambda x: rank.get(x, 999)))
+    d = (d.sort_values(["end", "filed", "_rank"], ascending=[True, True, False])
+          .drop_duplicates(subset=["end"], keep="last"))
     return d[["end", "val", "tag", "form", "filed", "accn", "days"]].reset_index(drop=True)
 
 
